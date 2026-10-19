@@ -11,7 +11,10 @@ function Invoke-AM4Control([string]$Command,[string[]]$Arguments=@(),[string]$Ex
         $raw=$Expression | & $script:AM4Node @allArgs
     }else{$raw=& $script:AM4Node @allArgs}
     $value=$raw | ConvertFrom-Json
-    if(!$value.ok){throw $value.error}
+    if(!$value.ok){
+        $details=if($value.processDiagnostics){' '+($value.processDiagnostics|ConvertTo-Json -Depth 6 -Compress)}else{''}
+        throw ($value.error+$details)
+    }
     return $value
 }
 function Start-AM4Operator([string]$Role='AUTOMATIC'){

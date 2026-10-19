@@ -16,6 +16,15 @@ function scenario(name,fn){test(name,async()=>{
 scenario('Default is manual, no test or controller can silently acquire',root=>{
  const c=new OperatorControl(root);assert.equal(c.status().safeToUseGame,true);assert.throws(()=>c.acquire('AUTOMATIC'));assert.throws(()=>c.acquire('TESTING'));c.close();
 });
+scenario('A later manual pause wins over a delayed resume preflight',root=>{
+ const c=new OperatorControl(root),d=new OperatorControl(root);try{const revision=c.status().revision;d.request('PAUSED/MANUAL');assert.throws(()=>c.request('AUTOMATIC',{expectedRevision:revision}),/OPERATOR_MODE_CHANGED_DURING_PREFLIGHT/);assert.equal(d.status().mode,'PAUSED/MANUAL');assert.equal(d.status().safeToUseGame,true);}finally{c.close();d.close();}
+});
+scenario('A later testing reservation wins over a delayed resume preflight',root=>{
+ const c=new OperatorControl(root),d=new OperatorControl(root);try{const revision=c.status().revision;d.request('TESTING');assert.throws(()=>c.request('AUTOMATIC',{expectedRevision:revision}),/OPERATOR_MODE_CHANGED_DURING_PREFLIGHT/);assert.equal(d.status().mode,'TESTING');}finally{c.close();d.close();}
+});
+scenario('Unchanged preflight revision permits explicit resume and exclusive ownership',root=>{
+ const c=new OperatorControl(root);try{const revision=c.status().revision;assert.equal(c.request('AUTOMATIC',{expectedRevision:revision}).mode,'AUTOMATIC');const owner=c.acquire('AUTOMATIC');assert.throws(()=>c.acquire('AUTOMATIC'),/INTERFACE_ALREADY_OWNED/);c.release(owner.token);}finally{c.close();}
+});
 scenario('Idle pause releases immediately and old worker cannot resume',root=>{
  const c=new OperatorControl(root);c.request('TESTING');const a=c.acquire('TESTING');assert.equal(c.request('PAUSED/MANUAL').safeToUseGame,true);assert.throws(()=>c.begin(a.token,'next'));c.close();const reopened=new OperatorControl(root);assert.equal(reopened.status().mode,'PAUSED/MANUAL');reopened.close();
 });

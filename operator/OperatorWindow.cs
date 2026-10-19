@@ -44,9 +44,9 @@ public sealed class AM4OperatorWindow : Form {
         start.RedirectStandardOutput = true; start.RedirectStandardError = true;
         start.StandardOutputEncoding = System.Text.Encoding.UTF8;
         using (var process = Process.Start(start)) {
-            if (!process.WaitForExit(5000)) { process.Kill(); throw new InvalidOperationException("Status unavailable; do not assume interface is released."); }
+            if (!process.WaitForExit(command == "automatic" ? 15000 : 5000)) { process.Kill(); throw new InvalidOperationException("Status unavailable; do not assume interface is released."); }
             var result = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(process.StandardOutput.ReadToEnd());
-            if (result == null || !result.ContainsKey("ok") || !Convert.ToBoolean(result["ok"])) throw new InvalidOperationException(result != null && result.ContainsKey("error") ? Convert.ToString(result["error"]) : "CONTROL_UNAVAILABLE");
+            if (result == null || !result.ContainsKey("ok") || !Convert.ToBoolean(result["ok"])) throw new InvalidOperationException((result != null && result.ContainsKey("error") ? Convert.ToString(result["error"]) : "CONTROL_UNAVAILABLE") + "\nFor process blockers, open AM4 Process Review.cmd for exact identities and guided review.");
             return result;
         }
     }

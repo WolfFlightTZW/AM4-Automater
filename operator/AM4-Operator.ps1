@@ -1,7 +1,8 @@
 #requires -Version 5.1
-param([ValidateSet('Panel','Pause','Resume','Testing','Status')][string]$Action='Panel')
+param([ValidateSet('Panel','Pause','Resume','Testing','Status','Diagnostics')][string]$Action='Panel')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Operator-Library.ps1')
+if($Action -eq 'Diagnostics'){$state=Invoke-AM4Control 'process-diagnostics';$state|ConvertTo-Json -Depth 6;exit 0}
 Write-Output 'Operator control library loaded.'
 function Start-Controller {
     $engine=Join-Path (Split-Path -Parent $PSScriptRoot) 'Start-AM4.ps1'

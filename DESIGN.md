@@ -33,6 +33,8 @@ After a completed pass the central setting `harness/production-settings.json: cy
 
 The existing operator controls provide AUTOMATIC, PAUSED/MANUAL and TESTING. Pause prevents new work and permits verification of a submitted action. SAFE TO USE GAME requires released ownership and expired command quarantine. Stale ownership forces manual mode; expired command tokens cannot click. A pause never resumes itself. A maintenance task may resume production only if it originally interrupted AUTOMATIC and no later operator request superseded that authorization.
 
+Unreadable elevated PowerShell processes require explicit operator inspection, not a blanket exemption. The guided local review binds PID, exact creation time and elevated-inspected identity; it rechecks before approval and resume. Review requests expire after ten minutes; approvals expire after 24 hours and are revalidated before submissions. Review does not arm or start production. Procedure and failure handling are maintained in operator/README.md.
+
 ## Transaction journal
 
 `harness/state/recovery.sqlite` uses SQLite WAL, synchronous FULL and indexed target/state queries. Intent is durable before the potentially irreversible CDP send. It contains target identity, action kind, compact quote, target-only pre-action recovery values, submission state, and compact resolution evidence.

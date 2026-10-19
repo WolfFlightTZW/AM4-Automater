@@ -7,6 +7,7 @@ One background Node.js controller operates the existing Steam AM4 session throug
 - **Start:** double-click `Start-AM4.cmd`. This explicitly requests AUTOMATIC and starts the serialized controller.
 - **Stop/manual:** double-click `Stop-AM4.cmd`, or choose PAUSE / MANUAL in `AM4 Operator.cmd`. Wait for **SAFE TO USE GAME** before interacting manually.
 - A manual pause survives restarts. Closing the operator window does not change the selected mode.
+- If startup reports unreadable processes, open **AM4 Process Review.cmd** and follow the explicit elevated inspection/approval procedure in [operator/README.md](operator/README.md#blocked-by-unreadable-elevated-powershell-processes). Approval never resumes the controller by itself.
 - Leave Steam AM4 open with its existing CDP endpoint on `127.0.0.1:9222`. Node.js 24+ is required; PowerShell launchers locate PATH or the existing bundled runtime.
 
 The normal delay **after a completed pass is 10 seconds**. Change `cycleSeconds` in **`harness/production-settings.json`**; no script editing is needed. `-CycleSeconds` remains an explicit per-run diagnostic override. Passes never overlap. Unresolved transactions increase the inter-pass wait to at least 30 seconds. Disconnect, lost ownership, or competing automation stops the controller safely; resolve the issue and explicitly start again.

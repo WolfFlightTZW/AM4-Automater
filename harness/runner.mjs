@@ -11,6 +11,7 @@ import { readProductionHolds } from './store.mjs';
 import { OperatorSession } from '../operator/control.mjs';
 import { ResourceCache } from './resource-cache.mjs';
 import { settings } from './settings.mjs';
+import {loadApprovals,approvalsValid} from '../operator/process-attestation.mjs';
 
 export class Runner {
   constructor(options, source, store) {
@@ -22,13 +23,8 @@ export class Runner {
     this.operator=new OperatorSession(join(this.options.productionRoot,'operator','state'),'TESTING');
     try{
     const passiveProbe = this.options.scenario === 'InspectAircraft' && !this.options.live;
-    this.guard = await acquireGuard(() => this.cdp?.close(), { passiveProbe, admitUnreadable: async unknown => {
-      const prompt = createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        const answer = await prompt.question(`Cannot inspect PowerShell process IDs ${unknown.map(p => p.pid).join(', ')}. Stop every AM4 controller, legacy script and browser bot first. Type NO OTHER AM4 AUTOMATION to attest that they are stopped, or Enter to cancel: `, { signal: AbortSignal.timeout(Math.min(60000, this.remaining())) });
-        return answer === 'NO OTHER AM4 AUTOMATION';
-      } finally { prompt.close(); }
-    } });
+    const approved=unknown=>approvalsValid(loadApprovals(join(this.options.productionRoot,'operator','state')),unknown);
+    this.guard = await acquireGuard(() => this.cdp?.close(), { passiveProbe, admitUnreadable:approved,revalidateUnreadable:approved });
     try {
       this.cdp = await Cdp.connect(Math.min(10000, this.remaining()),this.operator);
       if (!passiveProbe && (await this.dom('browserAutomation')).length) throw new Error('BROWSER_AUTOMATION_ACTIVE');
@@ -118,6 +114,7 @@ export class Runner {
       if (report.reason === 'RUNNING') report.reason = report.result === 'PASS' ? 'EXPECTED_OBSERVATION_VERIFIED' : 'REQUIRED_OBSERVATION_NOT_PROVEN';
     } catch (error) {
       report.result = 'INCONCLUSIVE'; report.reason = /^[A-Z0-9_.]+$/.test(error.message) ? error.message : 'OPERATION_FAILED_DETAILS_EXCLUDED';
+      if(error.processDiagnostics)report.processDiagnostics=error.processDiagnostics;
       if (report.checkpoint) {
         const action = this.store.get(report.checkpoint);
         if (action.state === 'PENDING') { action.state = 'UNKNOWN'; this.store.saveAction(action); }

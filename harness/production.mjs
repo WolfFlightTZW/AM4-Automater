@@ -14,6 +14,7 @@ import { OperatorSession } from '../operator/control.mjs';
 import { purchaseDecision,reconcilePurchase } from './purchasing.mjs';
 import { settings } from './settings.mjs';
 import { waitBetweenPasses } from './cadence.mjs';
+import {loadApprovals,approvalsValid} from '../operator/process-attestation.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url))),args=process.argv.slice(2),config={};
 for(let i=0;i<args.length;i+=2){if(!/^--[a-z-]+$/.test(args[i])||args[i+1]===undefined)throw new Error('INVALID_PRODUCTION_ARGUMENT');config[args[i].slice(2)]=Number(args[i+1]);}
 const cycle=config['cycle-seconds']??settings.cycleSeconds,maxDepartures=config['max-departures']??8,maxMaintenance=config['max-maintenance']??2,csvBatch=config['csv-batch']??10,maxPasses=config['max-passes']??0,passSeconds=config['pass-seconds']??600;
@@ -35,7 +36,7 @@ async function action(scenario,registration){
   report.actions.push({scenario,registration,id:r.id,checkpoint:r.checkpoint,result:r.result,reason:r.reason,submitted:r.actionAttempted?.submitted});
   if(r.checkpoint){const a=store.get(r.checkpoint);report.actions.at(-1).state=a.state;}
   report.activeAction=null;save(report);active();
-  if(/^(?:OPERATOR_|CDP_|CONTROLLER_|BROWSER_AUTOMATION_|PRODUCTION_SOURCE_CHANGED)/.test(r.reason))throw new Error(r.reason);
+  if(/^(?:OPERATOR_|CDP_|CONTROLLER_|BROWSER_AUTOMATION_|PRODUCTION_SOURCE_CHANGED)/.test(r.reason))throw Object.assign(new Error(r.reason),{processDiagnostics:r.processDiagnostics});
   return r;
 }
 async function purchaseMarkets(trigger){
@@ -63,8 +64,8 @@ async function purchaseMarkets(trigger){
 }
 try{
   runner.operator=new OperatorSession(join(root,'operator','state'),'AUTOMATIC');
-  const approved=JSON.parse(readFileSync(join(root,'operator','state','legacy-exclusion.json'),'utf8'));
-  const guardOptions={ignoreControllerPids:[process.ppid],admitUnreadable:async unknown=>unknown.every(p=>approved.processes.some(a=>a.pid===p.pid&&a.created===p.created))};
+  const approved=unknown=>approvalsValid(loadApprovals(join(root,'operator','state')),unknown);
+  const guardOptions={ignoreControllerPids:[process.ppid],admitUnreadable:approved,revalidateUnreadable:approved};
   for(let attempt=0;;attempt++){
     try{runner.guard=await acquireGuard(()=>runner.cdp?.close(),guardOptions);break;}
     catch(error){if(attempt>=4||!['CONTROLLER_OR_LEGACY_SCRIPT_RUNNING','CONTROLLER_LOCK_BUSY'].includes(error.message))throw error;runner.operator.assertCanCommit();await sleep(500);}
@@ -139,7 +140,7 @@ try{
   if(!runner.operator&&reason==='INTERFACE_ALREADY_OWNED_OR_UNCERTAIN'){
     console.log(JSON.stringify({event:'START_IGNORED',reason:'CONTROLLER_ALREADY_RUNNING_OR_INTERFACE_RESERVED'}));
   }else{
-  report ||= {started:new Date().toISOString(),actions:[]};report.status=reason.startsWith('OPERATOR_')?'STOPPED_OPERATOR_PAUSED':'STOPPED_SAFELY';report.reason=reason;report.finished=new Date().toISOString();save(report);
+  report ||= {started:new Date().toISOString(),actions:[]};report.status=reason.startsWith('OPERATOR_')?'STOPPED_OPERATOR_PAUSED':'STOPPED_SAFELY';report.reason=reason;if(error.processDiagnostics)report.processDiagnostics=error.processDiagnostics;report.finished=new Date().toISOString();save(report);
   console.log(JSON.stringify({event:'CONTROLLER_STOPPED',reason}));if(!reason.startsWith('OPERATOR_'))process.exitCode=2;
   }
 }finally{

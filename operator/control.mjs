@@ -46,9 +46,10 @@ export class OperatorControl {
       lastCompletedAction:s.lastCompleted?.name||null};
   }
   status(){return this.transaction(s=>this.view(s));}
-  request(mode){
+  request(mode,{expectedRevision}={}){
     if(!MODES.includes(mode))throw new Error('INVALID_OPERATOR_MODE');
     return this.transaction(s=>{
+      if(expectedRevision!==undefined&&(!Number.isSafeInteger(expectedRevision)||s.revision!==expectedRevision))throw new Error('OPERATOR_MODE_CHANGED_DURING_PREFLIGHT');
       if(mode!=='PAUSED/MANUAL'&&s.quarantineUntil>this.now())throw new Error('OLD_COMMAND_MAY_STILL_BE_RUNNING');
       s.mode=mode;s.revision++;this.settle(s);this.record('OPERATOR_MODE_REQUESTED',{mode,revision:s.revision});return this.view(s);
     });
