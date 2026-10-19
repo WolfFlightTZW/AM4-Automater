@@ -1,0 +1,456 @@
+# AM4 Integrated Operations Pass - Windows PowerShell 5.1 / Steam CDP.
+# First integration pass: resources -> full landed maintenance assessment -> dispatch decisions -> resources/fleet refresh.
+# Live market purchases and departures enabled. Maintenance submissions remain disabled until duplicate-work and flight-duration checks are validated.
+# This version skips ambiguous per-aircraft buttons, but still halts on uncertain submitted departures.
+# This is a deliberately bounded integration baseline, NOT unattended automation.
+param([int]$MaximumRunSeconds=900,[int]$MaxDepartures=30,[int]$DelaySeconds=2,[switch]$EnableGuardedMaintenance)
+$ErrorActionPreference='Stop'
+$root=Split-Path -Parent $MyInvocation.MyCommand.Path
+if(!(Test-Path $root)){New-Item -ItemType Directory -Path $root -Force|Out-Null}
+$reportPath=Join-Path $root 'reports\operations-latest.json'
+$stateDir=Join-Path $root 'state'
+$reportDir=Join-Path $root 'reports'
+$logDir=Join-Path $root 'logs'
+foreach($dir in @($stateDir,$reportDir,$logDir)){if(!(Test-Path -LiteralPath $dir)){New-Item -ItemType Directory -Path $dir -Force|Out-Null}}
+$statePath=Join-Path $stateDir 'operations-state.json'
+$ws=$null;$cts=$null
+$started=Get-Date
+$report=[ordered]@{version='operations-3.0';started=$started.ToString('o');status='STARTING';mode='LIVE_MARKET_AND_GUARDED_MAINTENANCE_AND_DEPARTURES';markets=@();purchases=@();landed=@();dispatchDecisions=@();endingMarkets=@();endingFleet=@();verifiedDepartures=@();maintenanceActions=@();resourceDelta=@();notes=@();finished=$null}
+function Write-AtomicJson([string]$path,[object]$obj) {
+ $temp=Join-Path (Split-Path -Parent $path) ('.'+[IO.Path]::GetFileName($path)+'.'+[guid]::NewGuid().ToString('N')+'.tmp')
+ try {
+  $json=ConvertTo-Json -InputObject $obj -Depth 18
+  [IO.File]::WriteAllText($temp,$json,(New-Object System.Text.UTF8Encoding($false)))
+  if(Test-Path -LiteralPath $path){
+   # Windows PowerShell 5.1/.NET Framework requires a legal backup path for File.Replace.
+   # Keep replacement on the same volume for atomicity; discard backup after success.
+   $backup=$temp+'.bak'
+   [IO.File]::Replace($temp,$path,$backup)
+   if(Test-Path -LiteralPath $backup){Remove-Item -LiteralPath $backup -Force}
+  }else{[IO.File]::Move($temp,$path)}
+ }finally{if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Force}}
+}
+function Write-SafeReport { Write-AtomicJson $reportPath $report }
+function Save-State { Write-AtomicJson $statePath $script:state }
+$script:state=@{schema=1;transactions=@{};lastUpdated=(Get-Date).ToString('o')}
+if(Test-Path -LiteralPath $statePath){
+ $previous=Get-Content -LiteralPath $statePath -Raw|ConvertFrom-Json
+ if($previous.schema -ne 1){throw 'Unknown state schema; refusing live operations'}
+ foreach($property in $previous.transactions.PSObject.Properties){$script:state.transactions[$property.Name]=$property.Value}
+}
+function Set-Transaction([string]$key,[string]$status,[object]$details){
+ $script:state.transactions[$key]=@{status=$status;at=(Get-Date).ToString('o');details=$details}
+ $script:state.lastUpdated=(Get-Date).ToString('o')
+ Save-State
+}
+function Is-Unresolved([string]$key){
+ if(!$script:state.transactions.ContainsKey($key)){return $false}
+ return @('PENDING','UNKNOWN') -contains [string]$script:state.transactions[$key].status
+}
+
+function Invoke-AM4([string]$js){
+ if(((Get-Date)-$started).TotalSeconds -gt $MaximumRunSeconds){throw 'Maximum single-pass runtime exceeded'}
+ if($ws.State -ne [Net.WebSockets.WebSocketState]::Open){throw 'AM4_CLIENT_CLOSED'}
+ $script:requestId++
+ $req=@{id=$script:requestId;method='Runtime.evaluate';params=@{expression=$js;returnByValue=$true;awaitPromise=$true}}|ConvertTo-Json -Depth 8 -Compress
+ $bytes=[Text.Encoding]::UTF8.GetBytes($req)
+ $null=$ws.SendAsync([ArraySegment[byte]]::new($bytes),[Net.WebSockets.WebSocketMessageType]::Text,$true,$cts.Token).GetAwaiter().GetResult()
+ while($true){
+  $buffer=[byte[]]::new(131072);$mem=[IO.MemoryStream]::new()
+  try{do{$r=$ws.ReceiveAsync([ArraySegment[byte]]::new($buffer),$cts.Token).GetAwaiter().GetResult();if($r.MessageType -eq [Net.WebSockets.WebSocketMessageType]::Close){throw 'AM4_CLIENT_CLOSED'};$mem.Write($buffer,0,$r.Count)}until($r.EndOfMessage);$resp=[Text.Encoding]::UTF8.GetString($mem.ToArray())|ConvertFrom-Json}finally{$mem.Dispose()}
+  if($resp.id -ne $script:requestId){continue}
+  if($resp.error -or $resp.result.exceptionDetails){throw 'CDP evaluation failed'}
+  if($null -eq $resp.result.result.value){throw 'Empty AM4 evaluation result'}
+  return ($resp.result.result.value|ConvertFrom-Json)
+ }
+}
+$marketJs=@'
+(async()=>{
+ const clean=s=>String(s||'').replace(/\s+/g,' ').trim(),vis=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden',pause=ms=>new Promise(r=>setTimeout(r,ms));
+ const menu=[...document.querySelectorAll('#smallMainMenu [onclick],.menu-btn-new[onclick]')].filter(vis).find(e=>clean(e.innerText).toUpperCase()==='FUEL');
+ if(!menu)return JSON.stringify({ok:false,reason:'Fuel menu unavailable'});
+ menu.click();await pause(750);
+ const read=(kind)=>{
+  const dialogs=[...document.querySelectorAll('.modal,[role="dialog"]')].filter(vis);
+  const d=dialogs.find(e=>kind==='co2'?/QUOTA COST/i.test(e.innerText||''):/CURRENT PRICE/i.test(e.innerText||''));
+  if(!d)return {ok:false,kind,reason:'Market dialog missing'};
+  const t=clean(d.innerText),n=s=>s==null?null:Number(s.replace(/,/g,''));
+  const price=t.match(new RegExp((kind==='co2'?'QUOTA COST':'CURRENT PRICE')+'\\s*\\$\\s*([\\d,]+)','i'));
+  const cap=t.match(/CAPACITY\s*([\d,]+)\s*\/\s*([\d,]+)/i),hold=t.match(/HOLDING\s*([\d,]+)/i);
+  const account=clean(document.body?.innerText).match(/\bACCOUNT\s*\$\s*([\d,]+)/i);
+  return {ok:!!(price&&cap&&hold&&account),kind,pricePer1000:n(price?.[1]),capacityUsed:n(cap?.[1]),capacityMax:n(cap?.[2]),holding:n(hold?.[1]),cash:n(account?.[1])};
+ };
+ const fuel=read('fuel');
+ const tab=document.querySelector('#popBtn2');if(!tab||!vis(tab)||!/CO2|CO₂/i.test(clean(tab.innerText)))return JSON.stringify({ok:false,reason:'CO2 tab unavailable',fuel});
+ tab.click();await pause(850);const co2=read('co2');
+ return JSON.stringify({ok:fuel.ok&&co2.ok,fuel,co2});
+})()
+'@
+$purchaseJsTemplate=@'
+(async()=>{
+ const kind=__KIND__, clean=s=>String(s||'').replace(/\s+/g,' ').trim(),visible=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden',pause=ms=>new Promise(r=>setTimeout(r,ms));
+ const menu=[...document.querySelectorAll('#smallMainMenu [onclick],.menu-btn-new[onclick]')].filter(visible).find(e=>clean(e.innerText).toUpperCase()==='FUEL');
+ if(!menu)return JSON.stringify({ok:false,reason:'Fuel navigation unavailable',clickAttempted:false});
+ menu.click();await pause(750);
+ if(kind==='co2'){
+  const tab=document.querySelector('#popBtn2');
+  if(!tab||!visible(tab)||!/CO2|CO₂/i.test(clean(tab.innerText)))return JSON.stringify({ok:false,reason:'CO2 tab missing',clickAttempted:false});
+  tab.click();await pause(850);
+ }
+ const inspect=()=>{
+  const d=[...document.querySelectorAll('.modal,[role="dialog"]')].filter(visible).find(e=>kind==='co2'?/QUOTA COST/i.test(e.innerText||''):/CURRENT PRICE/i.test(e.innerText||''));
+  if(!d)return null;
+  const t=clean(d.innerText),n=x=>x==null?NaN:Number(x.replace(/,/g,''));
+  const price=t.match(new RegExp((kind==='co2'?'QUOTA COST':'CURRENT PRICE')+'\\s*\\$\\s*([\\d,]+)','i'));
+  const cap=t.match(/CAPACITY\s*([\d,]+)\s*\/\s*([\d,]+)/i),hold=t.match(/HOLDING\s*([\d,]+)/i);
+  const cash=clean(document.body?.innerText).match(/\bACCOUNT\s*\$\s*([\d,]+)/i);
+  const inputs=[...d.querySelectorAll('input')].filter(visible).filter(e=>/amount to purchase/i.test(e.placeholder||''));
+  const buys=[...d.querySelectorAll('button,[role="button"],input[type="submit"]')].filter(visible).filter(e=>clean(e.innerText||e.value||'').toUpperCase()==='PURCHASE');
+  return {price:n(price?.[1]),capacity:n(cap?.[2]),holding:n(hold?.[1]),cash:n(cash?.[1]),inputs,buys};
+ };
+ const before=inspect(),limit=kind==='fuel'?1000:150;
+ if(!before)return JSON.stringify({ok:false,reason:'Market dialog unavailable',clickAttempted:false});
+ const b={price:before.price,capacity:before.capacity,holding:before.holding,cash:before.cash};
+ if(Object.values(b).some(x=>!Number.isSafeInteger(x))||before.inputs.length!==1||before.buys.length!==1||before.inputs[0].disabled||before.buys[0].disabled)
+  return JSON.stringify({ok:false,reason:'Market values or purchase controls ambiguous',before:b,clickAttempted:false});
+ if(before.price<=0||before.price>=limit||before.cash<=100000000)return JSON.stringify({ok:true,status:'NOT_ELIGIBLE',before:b,clickAttempted:false});
+ const free=Math.floor(before.capacity-before.holding),affordable=Math.floor((before.cash-100000000)*1000/before.price);
+ // Known-working UI behavior is 1,000-unit multiples; never submit an unverified fractional lot.
+ const amount=Math.floor(Math.min(free,affordable)/1000)*1000;
+ if(amount<1000)return JSON.stringify({ok:true,status:'NO_VERIFIED_LOT',before:b,clickAttempted:false});
+ const cost=amount*before.price/1000;
+ if(before.cash-cost<100000000)return JSON.stringify({ok:false,reason:'Cash reserve check failed',before:b,clickAttempted:false});
+ const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+ setter.call(before.inputs[0],String(amount));before.inputs[0].dispatchEvent(new Event('input',{bubbles:true}));before.inputs[0].dispatchEvent(new Event('change',{bubbles:true}));
+ await pause(350);const pre=inspect();
+ if(!pre||pre.price!==before.price||pre.capacity!==before.capacity||pre.holding!==before.holding||pre.cash!==before.cash||pre.inputs.length!==1||pre.buys.length!==1||pre.buys[0].disabled||String(pre.inputs[0].value)!==String(amount))
+  return JSON.stringify({ok:false,reason:'Precommit values changed',before:b,clickAttempted:false});
+ pre.buys[0].click();
+ for(let i=0;i<16;i++){
+  await pause(650);const after=inspect();
+  if(after&&Number.isSafeInteger(after.holding)&&Number.isSafeInteger(after.cash)&&after.holding>before.holding&&after.cash<before.cash){
+   return JSON.stringify({ok:true,status:'VERIFIED',clickAttempted:true,requested:amount,estimatedCost:cost,before:b,after:{holding:after.holding,cash:after.cash},holdingIncrease:after.holding-before.holding,cashDecrease:before.cash-after.cash});
+  }
+ }
+ return JSON.stringify({ok:false,status:'UNVERIFIED_AFTER_CLICK',reason:'Single purchase submitted; updated inventory and cash not confirmed',clickAttempted:true,requested:amount,before:b});
+})()
+'@
+$fleetJs=@'
+(()=>JSON.stringify([...document.querySelectorAll('.flight-list[data-reg]')].map(r=>{
+ const status=(r.querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase();
+ const wt=(r.querySelector('[id^="flightStatusWear"]')?.textContent||'').trim();
+ return {registration:r.dataset.reg,status,wear:/^\d+(?:\.\d+)?$/.test(wt)?Number(wt):null,grounded:r.dataset.grounded,location:r.parentElement?.id||null};
+}).filter(r=>r.registration)))()
+'@
+$maintJs=@'
+(()=>{
+ const pop=document.querySelector('#popup'),clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+ if(!pop||!pop.classList.contains('show'))return JSON.stringify({ok:false,reason:'Maintenance popup unavailable'});
+ const text=clean(pop.innerText),re=/\b(N-\d+(?:-\d+)?)\s+Pax\s+Flight hours\s+([\d,]+)\s+(At base|Not at base)\s+Hours to check\s+([\d,]+)\s+Wear\s+([\d,.]+)\s*%/g;
+ let m,rows=[];while((m=re.exec(text))!==null)rows.push({registration:m[1],flightHours:Number(m[2].replace(/,/g,'')),atBase:m[3]==='At base',hoursToCheck:Number(m[4].replace(/,/g,'')),wear:Number(m[5].replace(/,/g,''))});
+ return JSON.stringify({ok:rows.length>0,records:rows,recordCount:rows.length});
+})()
+'@
+try{
+ $pages=@(Invoke-RestMethod -Uri 'http://127.0.0.1:9222/json/list' -TimeoutSec 5)
+ $page=$pages|Where-Object {$_.type -eq 'page' -and $_.title -eq 'AM4'}|Select-Object -First 1
+ if(!$page -or !$page.webSocketDebuggerUrl){throw 'AM4_CLIENT_CLOSED'}
+ $ws=[Net.WebSockets.ClientWebSocket]::new();$cts=[Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($MaximumRunSeconds+10));$script:requestId=0
+ $null=$ws.ConnectAsync([uri]$page.webSocketDebuggerUrl,$cts.Token).GetAwaiter().GetResult()
+ Write-Host '1/4 Checking Fuel and CO2 prices, cash and capacity...'
+ $markets=Invoke-AM4 $marketJs
+ if(!$markets.ok){throw 'Market read incomplete; stopping without actions'}
+ foreach($item in @($markets.fuel,$markets.co2)){
+  $limit=if($item.kind -eq 'fuel'){1000}else{150};$free=[math]::Max([double]0,([double]$item.capacityMax-[double]$item.holding))
+  $affordable=if($item.pricePer1000 -gt 0){[math]::Max([double]0,[math]::Floor(([double]$item.cash-100000000)*1000/[double]$item.pricePer1000))}else{0}
+  $eligible=if($item.pricePer1000 -gt 0 -and $item.pricePer1000 -lt $limit){[math]::Min([double]$free,[double]$affordable)}else{0}
+  $report.markets+=@{kind=$item.kind;price=$item.pricePer1000;cash=$item.cash;holding=$item.holding;capacity=$item.capacityMax;free=$free;threshold=$limit;eligibleExactUnits=$eligible;purchaseSubmitted=$false}
+  Write-Host ("  {0}: price {1}; free {2}; eligible {3}; no purchase submitted" -f $item.kind,$item.pricePer1000,$free,$eligible)
+ }
+ # Durable write-ahead transaction state. No per-resource attempt lock files.
+ foreach($kind in @('fuel','co2')){
+  $row=@($report.markets|Where-Object {$_.kind -eq $kind})|Select-Object -First 1
+  if([double]$row.eligibleExactUnits -lt 1000){continue}
+  $key='purchase:'+ $kind
+  if(Is-Unresolved $key){
+   $report.notes+=("Purchase held: unresolved prior transaction for {0}" -f $kind)
+   Write-Warning ("Purchase held: unresolved prior transaction for {0}" -f $kind)
+   continue
+  }
+  # PENDING is persisted BEFORE any potentially irreversible browser operation.
+  Set-Transaction $key 'PENDING' @{price=$row.price;cash=$row.cash;holding=$row.holding;capacity=$row.capacity}
+  try {
+   $js=$purchaseJsTemplate.Replace('__KIND__',('"'+$kind+'"'))
+   $result=Invoke-AM4 $js
+   $report.purchases+=@{kind=$kind;result=$result}
+   if($result.clickAttempted){$row.purchaseSubmitted=$true}
+   if($result.status -eq 'VERIFIED' -and $result.ok){
+    Set-Transaction $key 'VERIFIED' $result
+    Write-Host ("  VERIFIED {0} purchase: {1:N0} units; observed +{2:N0}; cash -${3:N0}" -f $kind,[double]$result.requested,[double]$result.holdingIncrease,[double]$result.cashDecrease)
+   }elseif($result.clickAttempted){
+    Set-Transaction $key 'UNKNOWN' $result
+    throw ("Purchase outcome uncertain for {0}; holding further {0} purchases" -f $kind)
+   }else{
+    Set-Transaction $key 'NOT_SUBMITTED' $result
+    if(!$result.ok){Write-Warning ("Purchase preflight held for {0}: {1}" -f $kind,$result.reason)}
+   }
+   Write-SafeReport
+  }catch{
+   if(Is-Unresolved $key){Set-Transaction $key 'UNKNOWN' @{reason=$_.Exception.Message}}
+   throw
+  }
+ }
+ Write-Host '2/4 Refreshing aircraft and opening maintenance listing...'
+
+ $initial=@(Invoke-AM4 $fleetJs)
+ $landed=@($initial|Where-Object {$_.status -eq 'landed' -and $_.location -eq 'landedList'})
+ if($landed.Count -eq 0){$report.notes+= 'No landed aircraft found; maintenance and dispatch stages skipped.'}
+ else{
+  $regJson=ConvertTo-Json -InputObject ([string]$landed[0].registration) -Compress
+  $select=Invoke-AM4 "(()=>{const r=[...document.querySelectorAll('#landedList .flight-list[data-reg]')].filter(e=>e.dataset.reg===$regJson);if(r.length!==1)return JSON.stringify({ok:false});r[0].click();return JSON.stringify({ok:true});})()"
+  if(!$select.ok){throw 'Cannot select a unique landed aircraft'}
+  Start-Sleep -Milliseconds 650
+  $details=Invoke-AM4 @'
+(()=>{const v=e=>!!e.getClientRects().length,b=[...document.querySelectorAll('button')].filter(e=>v(e)&&e.textContent.trim()==='Details');if(b.length!==1)return JSON.stringify({ok:false});b[0].click();return JSON.stringify({ok:true});})()
+'@
+  if(!$details.ok){throw 'Aircraft Details control unavailable'}
+  Start-Sleep -Milliseconds 750
+  $nav=Invoke-AM4 @'
+(()=>{const b=[...document.querySelectorAll('button')].filter(e=>e.textContent.trim()==='Maintenance'&&(e.getAttribute('onclick')||'').includes('maintenance_main.php?action='));if(b.length!==1)return JSON.stringify({ok:false});b[0].click();return JSON.stringify({ok:true});})()
+'@
+  if(!$nav.ok){throw 'Maintenance navigation unavailable'}
+  Start-Sleep -Seconds 2
+  $show=Invoke-AM4 @'
+(()=>{const p=document.querySelector('#popup');if(!p||!p.classList.contains('show'))return JSON.stringify({ok:false});const a=[...p.querySelectorAll('a')].filter(e=>e.textContent.trim().toLowerCase().startsWith('show all')&&(e.getAttribute('onclick')||'').includes('maint_plan.php'));if(a.length===1){a[0].click();return JSON.stringify({ok:true,clicked:true});}return JSON.stringify({ok:true,clicked:false});})()
+'@
+  if(!$show.ok){throw 'Maintenance list unavailable'}
+  if($show.clicked){Start-Sleep -Seconds 2}
+  $maint=Invoke-AM4 $maintJs
+  if(!$maint.ok){throw 'No parseable maintenance records; fail closed'}
+  $byReg=@{};foreach($m in $maint.records){if($byReg.ContainsKey([string]$m.registration)){$byReg[[string]$m.registration]=$null}else{$byReg[[string]$m.registration]=$m}}
+  foreach($a in $landed){
+   $m=$byReg[[string]$a.registration];$reasons=@()
+   if($null -eq $m){$reasons+='MAINTENANCE_UNKNOWN'}else{
+    if([double]$m.wear -gt 9){$reasons+='REPAIR_REQUIRED'}
+    if([double]$m.hoursToCheck -le 20){$reasons+='A_CHECK_PLANNING'}
+    elseif([double]$m.hoursToCheck -le 40){$reasons+='A_CHECK_WATCH'}
+   }
+   if($a.grounded -ne '0'){$reasons+='GROUNDED'}
+   if($null -eq $a.wear){$reasons+='WEAR_UNKNOWN'}
+   if($reasons.Count -eq 0){$reasons+='FLIGHT_DURATION_AND_PENDING_WORK_NOT_YET_VERIFIED'}
+   $record=@{registration=$a.registration;wear=$a.wear;hoursToCheck=if($m){$m.hoursToCheck}else{$null};atBase=if($m){$m.atBase}else{$null};reasons=$reasons;repairSubmitted=$false;aCheckSubmitted=$false;departureSubmitted=$false}
+   $report.landed+=$record
+   $report.dispatchDecisions+=@{registration=$a.registration;decision='HOLD';reasons=$reasons}
+  }
+ }
+
+ # Maintenance submissions are one-shot per registration and type, guarded by a persistent lock.
+ # An existing lock or an ambiguous schedule/selection prevents further clicks.
+ Write-Host ("Maintenance stage: inspecting {0} landed aircraft for repair and due A-check..." -f $report.landed.Count)
+ foreach($record in @($report.landed)) {
+  $reg=[string]$record.registration
+  if($reg -eq 'N-145'){continue}
+  $kind=if(@($record.reasons) -contains 'REPAIR_REQUIRED'){'repair'}elseif($null -ne $record.hoursToCheck -and [double]$record.hoursToCheck -le 20){'check'}else{$null}
+  if(!$kind){continue}
+  if($record.atBase -ne $true -or @($record.reasons) -contains 'GROUNDED' -or @($record.reasons) -contains 'MAINTENANCE_UNKNOWN') {continue}
+  $maintenanceKey='maintenance:'+ $reg+':'+$kind
+  if(Is-Unresolved $maintenanceKey){$report.notes+=("Maintenance unresolved: {0} {1}" -f $reg,$kind);continue}
+  $regJson=ConvertTo-Json -InputObject $reg -Compress
+  $kindJson=ConvertTo-Json -InputObject $kind -Compress
+  # Navigate only through a uniquely identified landed row and its individual maintenance dialog.
+  $openJs=@"
+(async()=>{
+ const reg=$regJson,rows=[...document.querySelectorAll('#landedList .flight-list[data-reg]')].filter(r=>r.dataset.reg===reg);
+ if(rows.length!==1||rows[0].dataset.grounded!=='0'||(rows[0].querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase()!=='landed')return JSON.stringify({ok:false,reason:'Not uniquely landed and ungrounded'});
+ rows[0].click();await new Promise(r=>setTimeout(r,600));
+ const visible=e=>!!e.getClientRects().length;
+ const details=[...document.querySelectorAll('button')].filter(e=>visible(e)&&e.textContent.trim()==='Details');
+ if(details.length!==1)return JSON.stringify({ok:false,reason:'Details ambiguous'});
+ details[0].click();await new Promise(r=>setTimeout(r,600));
+ const buttons=[...document.querySelectorAll('button')].filter(e=>visible(e)&&e.textContent.trim()==='Maintenance'&&/maintenance_main\.php\?action=/.test(e.getAttribute('onclick')||''));
+ if(buttons.length!==1)return JSON.stringify({ok:false,reason:'Maintenance navigation ambiguous'});
+ buttons[0].click();await new Promise(r=>setTimeout(r,1400));
+ return JSON.stringify({ok:true});
+})()
+"@
+  $opened=Invoke-AM4 $openJs
+  if(!$opened.ok){$report.notes+=("Maintenance skipped {0}: {1}" -f $reg,$opened.reason);continue}
+  $preJs=@"
+(()=>{
+ const reg=$regJson,kind=$kindJson,p=document.querySelector('#popup');
+ if(!p||!p.classList.contains('show'))return JSON.stringify({ok:false,reason:'Individual maintenance popup missing'});
+ const text=p.innerText.replace(/\s+/g,' ');
+ const esc=reg;
+ const match=text.match(new RegExp('(?:^|\\s)'+esc+'\\s+Pax\\s+Flight hours\\s+[\\d,]+\\s+(At base|Not at base)\\s+Hours to check\\s+([\\d,]+)\\s+Wear\\s+([\\d,.]+)\\s*%'));
+ if(!match||match[1]!=='At base')return JSON.stringify({ok:false,reason:'Exact aircraft not verified at base'});
+ const hours=Number(match[2].replace(/,/g,'')),wear=Number(match[3].replace(/,/g,''));
+ if(kind==='repair'&&!(wear>9))return JSON.stringify({ok:false,reason:'Wear no longer over 9'});
+ if(kind==='check'&&!(hours<=20))return JSON.stringify({ok:false,reason:'A-check not yet due'});
+ // No trustworthy evidence of pending-work absence is available from this popup.
+ // Require an explicit zero-pending signal before committing. Otherwise HOLD.
+ const pending=text.match(/(?:pending|scheduled|in progress|under maintenance)/i);
+ if(pending)return JSON.stringify({ok:false,reason:'Possible existing maintenance'});
+ const action=kind==='repair'?'Repair':'A-Check';
+ const buttons=[...p.querySelectorAll('button')].filter(e=>e.textContent.trim()===action&&new RegExp('maint_plan_do\\.php\\?type='+(kind==='repair'?'repair':'check')+'&id=\\d+').test(e.getAttribute('onclick')||''));
+ if(buttons.length!==1||buttons[0].disabled)return JSON.stringify({ok:false,reason:'Action button not unique/enabled'});
+ return JSON.stringify({ok:true,hours,wear,reason:'Action preflight only; pending schedule not independently verified'});
+})()
+"@
+  $pre=Invoke-AM4 $preJs
+  if(!$pre.ok){$report.notes+=("Maintenance skipped {0}: {1}" -f $reg,$pre.reason);continue}
+  if(!$EnableGuardedMaintenance){
+   $report.maintenanceActions+=@{registration=$reg;kind=$kind;status='DRY_RUN';wear=$pre.wear;hoursToCheck=$pre.hours}
+   continue
+  }
+  # Lock before any irreversible submission. Existing locks permanently block retries
+  # until an operator has reconciled the actual in-game outcome.
+  try {
+   Set-Transaction $maintenanceKey 'PENDING' @{registration=$reg;kind=$kind}
+   $plannerJs=@"
+(async()=>{
+ const reg=$regJson,kind=$kindJson,p=document.querySelector('#popup');
+ if(!p||!p.classList.contains('show'))return JSON.stringify({ok:false,reason:'Popup lost'});
+ const t=p.innerText.replace(/\s+/g,' ');
+ if(!t.includes(reg+' Pax ')||/(?:pending|scheduled|in progress|under maintenance)/i.test(t))return JSON.stringify({ok:false,reason:'Identity or pending status ambiguous'});
+ const name=kind==='repair'?'Repair':'A-Check';
+ const bs=[...p.querySelectorAll('button')].filter(b=>b.textContent.trim()===name&&new RegExp('maint_plan_do\.php\?type='+(kind==='repair'?'repair':'check')+'&id=\d+').test(b.getAttribute('onclick')||''));
+ if(bs.length!==1||bs[0].disabled)return JSON.stringify({ok:false,reason:'Planning control ambiguous'});
+ bs[0].click();await new Promise(r=>setTimeout(r,950));
+ const q=document.querySelector('#popup');if(!q||!q.classList.contains('show'))return JSON.stringify({ok:false,reason:'Planner did not open'});
+ const txt=q.innerText.replace(/\s+/g,' '),heading=kind==='repair'?'A/C REPAIR':'A-CHECK',ix=txt.indexOf(heading),tail=ix>=0?txt.slice(ix):'';
+ if(ix<0||!tail.includes(reg)||!new RegExp('(?:Repair start|Maintenance start)\s+Now').test(tail)||!/Total cost\s*\$\s*[\d,]+/.test(tail))return JSON.stringify({ok:false,reason:'Planner identity/cost/start unverified'});
+ const finalName=kind==='repair'?'Plan repair':'Plan check';
+ const controls=[...q.querySelectorAll('button,a,input[type=submit],input[type=button]')].filter(e=>!!e.getClientRects().length&&String(e.innerText||e.value||'').trim()===finalName&&!e.disabled);
+ if(controls.length!==1)return JSON.stringify({ok:false,reason:'Final plan control ambiguous'});
+ return JSON.stringify({ok:true,cost:Number(tail.match(/Total cost\s*\$\s*([\d,]+)/)?.[1].replace(/,/g,'')),tail:tail.slice(0,450)});
+})()
+"@
+   $planner=Invoke-AM4 $plannerJs
+   if(!$planner.ok){Set-Transaction $maintenanceKey 'NOT_SUBMITTED' $planner;$report.maintenanceActions+=@{registration=$reg;kind=$kind;status='HELD_PLANNER';reason=$planner.reason};continue}
+   # The absence of a pending label is NOT proof of no pending work. A persistent
+   # attempt lock prevents retries; game-level pending state remains unverified.
+   $commitJs=@"
+(()=>{
+ const reg=$regJson,kind=$kindJson,p=document.querySelector('#popup');
+ if(!p||!p.classList.contains('show'))return JSON.stringify({ok:false,clicked:false,reason:'Planner disappeared'});
+ const t=p.innerText.replace(/\s+/g,' '),heading=kind==='repair'?'A/C REPAIR':'A-CHECK',ix=t.indexOf(heading),tail=ix<0?'':t.slice(ix);
+ if(ix<0||!tail.includes(reg)||!/(?:Repair start|Maintenance start)\s+Now/.test(tail)||!/Total cost\s*\$\s*[\d,]+/.test(tail))return JSON.stringify({ok:false,clicked:false,reason:'Planner changed'});
+ const label=kind==='repair'?'Plan repair':'Plan check';
+ const bs=[...p.querySelectorAll('button,a,input[type=submit],input[type=button]')].filter(e=>!!e.getClientRects().length&&String(e.innerText||e.value||'').trim()===label&&!e.disabled);
+ if(bs.length!==1)return JSON.stringify({ok:false,clicked:false,reason:'Final control changed'});
+ bs[0].click();return JSON.stringify({ok:true,clicked:true});
+})()
+"@
+   $commit=Invoke-AM4 $commitJs
+   if($commit.clicked){Set-Transaction $maintenanceKey 'UNKNOWN' @{registration=$reg;kind=$kind;estimatedCost=$planner.cost}}else{Set-Transaction $maintenanceKey 'NOT_SUBMITTED' $commit}
+   $report.maintenanceActions+=@{registration=$reg;kind=$kind;status=if($commit.clicked){'SUBMITTED_UNVERIFIED'}else{'HELD_COMMIT'};reason=$commit.reason;estimatedCost=$planner.cost}
+   if($commit.clicked){
+    $record.repairSubmitted=($kind -eq 'repair');$record.aCheckSubmitted=($kind -eq 'check')
+    $report.notes+=("Maintenance submitted once for {0} ({1}); outcome requires reconciliation" -f $reg,$kind)
+    Write-Host ("  Submitted maintenance once: {0} {1}; attempt lock retained" -f $reg,$kind)
+   }
+   Write-SafeReport
+  }catch{
+   if(Is-Unresolved $maintenanceKey){Set-Transaction $maintenanceKey 'UNKNOWN' @{reason=$_.Exception.Message}}
+   $report.maintenanceActions+=@{registration=$reg;kind=$kind;status='UNKNOWN_ATTEMPT'}
+   Write-SafeReport
+   throw
+  }
+
+ }
+ Write-SafeReport
+
+ Write-Host ("3/4 Assessed {0} landed aircraft. Attempting up to {1} guarded departures..." -f $report.landed.Count,$MaxDepartures)
+ $departed=0
+ $attempted=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+ foreach($decision in @($report.dispatchDecisions)){
+  if($departed -ge $MaxDepartures){break}
+  $reg=[string]$decision.registration
+  if($reg -eq 'N-145'){continue}
+  if(!$attempted.Add($reg)){continue}
+  $record=@($report.landed|Where-Object {$_.registration -eq $reg})|Select-Object -First 1
+  # Never dispatch aircraft needing repair, grounded, unknown, or within the A-check planning window.
+  # A_CHECK_WATCH (20-40 hours) is not automatically a grounding reason, but
+  # the flight duration is not yet verified: hold those aircraft too.
+  if($record.repairSubmitted -or $record.aCheckSubmitted){continue}
+  if(@($record.reasons).Count -ne 1 -or $record.reasons[0] -ne 'FLIGHT_DURATION_AND_PENDING_WORK_NOT_YET_VERIFIED'){
+   continue
+  }
+  # Explicitly restrict first live trial to >40h remaining to avoid near-term A-checks.
+  if($null -eq $record.hoursToCheck -or [double]$record.hoursToCheck -le 40){continue}
+  # Re-read both inventories immediately before dispatch; do not deplete below reserve.
+  $resources=Invoke-AM4 $marketJs
+  if(!$resources.ok -or [double]$resources.fuel.holding -lt 75000 -or [double]$resources.co2.holding -lt 75000){
+   $report.notes+='Departure halted: fuel/CO2 reserve unavailable or below 75,000'
+   break
+  }
+  $regJson=ConvertTo-Json -InputObject $reg -Compress
+  $selectJs=@"
+(()=>{
+ const reg=$regJson,rows=[...document.querySelectorAll('#landedList .flight-list[data-reg]')].filter(r=>r.dataset.reg===reg);
+ if(rows.length!==1)return JSON.stringify({ok:false,reason:'aircraft missing or ambiguous'});
+ const r=rows[0],t=(r.querySelector('[id^="flightStatusWear"]')?.textContent||'').trim(),wear=/^\d+(\.\d+)?$/.test(t)?Number(t):NaN;
+ if(!Number.isFinite(wear)||wear>9||r.dataset.grounded!=='0'||(r.querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase()!=='landed')return JSON.stringify({ok:false,reason:'changed eligibility'});
+ r.click();return JSON.stringify({ok:true,wear});
+})()
+"@
+  $selection=Invoke-AM4 $selectJs
+  if(!$selection.ok){$report.notes+=("Skipping {0}: {1}" -f $reg,$selection.reason);continue}
+  Start-Sleep -Milliseconds 650
+  $departJs=@"
+(()=>{
+ const reg=$regJson,rows=[...document.querySelectorAll('#landedList .flight-list[data-reg]')].filter(r=>r.dataset.reg===reg);
+ if(rows.length!==1)return JSON.stringify({ok:false,reason:'landed row changed'});
+ const r=rows[0],t=(r.querySelector('[id^="flightStatusWear"]')?.textContent||'').trim(),wear=/^\d+(\.\d+)?$/.test(t)?Number(t):NaN;
+ if(!Number.isFinite(wear)||wear>9||r.dataset.grounded!=='0'||(r.querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase()!=='landed')return JSON.stringify({ok:false,reason:'ineligible at action'});
+ const visible=e=>!!e.getClientRects().length;
+ const buttons=[...document.querySelectorAll('button')].filter(b=>/^flightInfoDepart\d+$/.test(b.id)&&b.innerText.trim()==='Depart'&&visible(b)&&!b.disabled);
+ if(buttons.length!==1)return JSON.stringify({ok:false,reason:'Depart button ambiguous',count:buttons.length});
+ if(!(document.body.innerText||'').replace(/\s+/g,' ').includes(reg+' '+wear.toFixed(2)+'% worn'))return JSON.stringify({ok:false,reason:'selected aircraft panel mismatch'});
+ buttons[0].click();return JSON.stringify({ok:true,wear});
+})()
+"@
+  $action=Invoke-AM4 $departJs
+  if(!$action.ok){
+   if($action.reason -eq 'Depart button ambiguous' -or $action.reason -eq 'selected aircraft panel mismatch' -or $action.reason -eq 'landed row changed' -or $action.reason -eq 'ineligible at action'){
+    $decision.decision='SKIPPED';$decision.reasons=@([string]$action.reason);$report.notes+=("Skipped {0}: {1}; button count {2}" -f $reg,$action.reason,$action.count);Write-Host ("  Skipped {0}: {1}" -f $reg,$action.reason);continue
+   }
+   throw ("Departure stopped for {0}: {1}" -f $reg,$action.reason)
+  }
+  $verified=$false
+  for($check=0;$check -lt 8;$check++){
+   Start-Sleep -Milliseconds 750
+   $verifyJs="(()=>JSON.stringify([...document.querySelectorAll('.flight-list[data-reg]')].filter(r=>r.dataset.reg===$regJson).map(r=>({parent:r.parentElement?.id||''}))))()"
+   $rows=@(Invoke-AM4 $verifyJs)
+   if(@($rows|Where-Object {$_.parent -eq 'inflightList'}).Count -eq 1){$verified=$true;break}
+  }
+  if(!$verified){throw "Departure for $reg not verified; stopping without retry"}
+  $departed++
+  $record.departureSubmitted=$true
+  $decision.decision='DEPARTED_VERIFIED'
+  $report.verifiedDepartures+=@{registration=$reg;wear=$action.wear;at=(Get-Date).ToString('o')}
+  Write-Host ("  VERIFIED departure {0}/{1}: {2}" -f $departed,$MaxDepartures,$reg)
+  Write-SafeReport
+  if($departed -lt $MaxDepartures){Start-Sleep -Seconds $DelaySeconds}
+ }
+ Write-Host '4/4 Rechecking markets and refreshing entire aircraft list...'
+ $ending=Invoke-AM4 $marketJs
+ if(!$ending.ok){throw 'Final market refresh incomplete'}
+ $report.endingMarkets=@($ending.fuel,$ending.co2)
+ $report.endingFleet=@(Invoke-AM4 $fleetJs)
+ foreach($kind in @('fuel','co2')){
+  $before=@($report.markets|Where-Object {$_.kind -eq $kind})|Select-Object -First 1
+  $after=if($kind -eq 'fuel'){$ending.fuel}else{$ending.co2}
+  $report.resourceDelta+=@{kind=$kind;holdingBefore=$before.holding;holdingAfter=$after.holding;holdingChange=([double]$after.holding-[double]$before.holding);freeBefore=$before.free;freeAfter=([double]$after.capacityMax-[double]$after.holding);freeChange=(([double]$after.capacityMax-[double]$after.holding)-[double]$before.free)}
+ }
+ $report.status='COMPLETED_OPERATIONS_PASS'
+ Write-Host ("PASS COMPLETE: {0} fleet rows refreshed; {1} departures verified. Maintenance attempts recorded; pending-work and dispatch-resource verification still limited." -f $report.endingFleet.Count,$departed)
+}catch{
+ $msg=$_.Exception.Message
+ if($msg -match 'AM4_CLIENT_CLOSED|connection.*(closed|refused)|actively refused|Unable to connect|WebSocket.*closed'){$report.status='STOPPED_GAME_CLOSED';Write-Host 'AM4 client unavailable; controller stopped cleanly.'}
+ else{$report.status='STOPPED_SAFELY';$report.notes+=($msg -replace 'wss?://\S+','[REDACTED]');Write-Warning 'Pass stopped safely; see report for non-secret reason.'}
+}finally{
+ $report.finished=(Get-Date).ToString('o')
+ try{Write-SafeReport;Write-Host "Report: $reportPath"}catch{Write-Warning 'Could not write pass report'}
+ if($ws){$ws.Dispose()};if($cts){$cts.Dispose()}
+}

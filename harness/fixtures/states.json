@@ -1,0 +1,127 @@
+{
+  "provenance": "Synthetic operational fixtures for offline policy tests; not live AM4 evidence.",
+  "ready": {
+    "fleet": [
+      {
+        "registration": "N-TEST001",
+        "status": "landed",
+        "location": "landedList",
+        "grounded": "0",
+        "wear": 12.5
+      }
+    ],
+    "maintenance": {
+      "ok": true,
+      "records": [
+        {
+          "registration": "N-TEST001",
+          "id": "123",
+          "atBase": true,
+          "wear": 12.5,
+          "hoursToCheck": 19,
+          "availableActions": [
+            "repair",
+            "check"
+          ]
+        }
+      ]
+    },
+    "schedule": {
+      "complete": true,
+      "entries": []
+    },
+    "markets": {
+      "ok": true,
+      "fuel": {
+        "holding": 100000
+      },
+      "co2": {
+        "holding": 100000
+      }
+    }
+  },
+  "pending": {
+    "fleet": [
+      {
+        "registration": "N-TEST001",
+        "status": "landed",
+        "location": "landedList",
+        "grounded": "1",
+        "wear": 12.5
+      }
+    ],
+    "maintenance": {
+      "ok": true,
+      "records": [
+        {
+          "registration": "N-TEST001",
+          "id": "123",
+          "atBase": true,
+          "wear": 12.5,
+          "hoursToCheck": 19
+        }
+      ]
+    },
+    "schedule": {
+      "complete": true,
+      "entries": [
+        {
+          "registration": "N-TEST001",
+          "kind": "repair",
+          "aircraftId": "123"
+        }
+      ]
+    }
+  },
+  "completed": {
+    "fleet": [
+      {
+        "registration": "N-TEST001",
+        "status": "landed",
+        "location": "landedList",
+        "grounded": "0",
+        "wear": 0
+      }
+    ],
+    "maintenance": {
+      "ok": true,
+      "records": [
+        {
+          "registration": "N-TEST001",
+          "id": "123",
+          "atBase": true,
+          "wear": 0,
+          "hoursToCheck": 19
+        }
+      ]
+    },
+    "schedule": {
+      "complete": true,
+      "entries": []
+    },
+    "markets": {
+      "ok": true,
+      "fuel": {
+        "holding": 100000
+      },
+      "co2": {
+        "holding": 100000
+      }
+    }
+  },
+  "purchase": {
+    "ok": true,
+    "clickAttempted": true,
+    "requested": 8000,
+    "estimatedCost": 1000,
+    "holdingIncrease": 8000,
+    "cashDecrease": 1000
+  },
+  "market": {
+    "kind": "co2",
+    "price": 125,
+    "capacity": 200000,
+    "holding": 190123,
+    "cash": 250000000
+  }
+}

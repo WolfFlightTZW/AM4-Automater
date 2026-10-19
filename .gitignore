@@ -1,0 +1,47 @@
+# Local examples and historical source: never upload
+/[Rr]eferences/
+/[Aa]rchive/
+
+# Airline state, private observations, recovery archives and logs
+/[Rr]eports/
+/[Ll]ogs/
+/state/
+**/state/
+**/backups/
+**/evidence/
+**/results*/
+*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# Generated build/test/install artifacts
+*.exe
+*.dll
+*.pdb
+*.zip
+*.tmp
+*.bak
+*.lock
+**/install-manifest.json
+/operator/validation.json
+/operator/live-handoff-result.json
+/node_modules/
+/coverage/
+/.am4-init-*/
+
+# Local credentials, editor/runtime metadata
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.credentials*
+*.session*
+/.codex/
+/.agents/
+/.vscode/
+.DS_Store
+Thumbs.db
