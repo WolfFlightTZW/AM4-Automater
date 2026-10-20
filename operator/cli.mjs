@@ -1,7 +1,7 @@
 import { OperatorControl } from './control.mjs';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
-import {preflight,diagnostics} from './process-attestation.mjs';
+import {preflight,diagnostics} from './process-diagnostics.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {join} from 'node:path';
 const args=process.argv.slice(2),action=args.shift()||'status';
@@ -11,14 +11,14 @@ let control;
 let expectedRevision;
 try{
   let result;
-  if(action==='resume-preflight')result={processes:await preflight(root,{ignoreControllerPids:[process.ppid]})};
-  else if(action==='process-diagnostics')result=await diagnostics(root);
+  if(action==='resume-preflight')result=await preflight({ignoreControllerPids:[process.ppid]});
+  else if(action==='process-diagnostics')result=await diagnostics();
   else {
   // Central hook also protects already-built operator windows using the existing automatic command.
   if(action==='automatic'){
     // Read without changing ownership. A later pause/testing request must win while CIM is running.
     let database;try{database=new DatabaseSync(join(root,'operator.sqlite'),{readOnly:true});expectedRevision=JSON.parse(database.prepare('SELECT data FROM control WHERE id=1').get().data).revision;if(!Number.isSafeInteger(expectedRevision))throw new Error('INVALID_REVISION');}catch{throw new Error('OPERATOR_STATE_UNAVAILABLE');}finally{database?.close();}
-    await preflight(root,{ignoreControllerPids:[process.ppid]});
+    await preflight({ignoreControllerPids:[process.ppid]});
   }
   control=new OperatorControl(root);
   if(action==='status')result=control.status();

@@ -21,7 +21,7 @@ Node.js 24+ supplies WebSocket, SQLite and node:test. No npm dependencies or add
 | `fleet-report.mjs` | Incremental informational CSV and coverage sidecar |
 | `main.mjs`, `Run-AM4Tests.ps1` | Offline/read-only defaults; named TESTING scenarios |
 | `../operator/` | Existing mode/ownership database, command leases, UI and PowerShell bridge |
-| `processes.mjs`, `../operator/process-attestation.mjs` | Read-only PowerShell process inventory, safe diagnostics, exact-instance elevated review and expiring local approval |
+| `processes.mjs`, `../operator/process-diagnostics.mjs` | Read-only process/TCP inventory, evidence-based conflicts and visibility warnings |
 
 ## Data ownership
 
@@ -69,4 +69,6 @@ New installations initialize their own empty recovery/control state using `init-
 
 Known adapter constraint: maintenance schedule text parsing currently recognizes N-prefixed registrations. Synthetic schedule fixtures therefore use N-TEST identities. Other naming conventions need a separate adapter validation; unrecognized schedule rows remain inconclusive. N-145 remains an intentional configured exclusion, not a remembered fleet observation.
 
-Process attestation is separate from transaction recovery and operator ownership. Review requests last ten minutes; a named per-instance elevated confirmation is re-enumerated and fingerprint-checked before saving. Schema-2 approvals last at most 24 hours, are read again at resume/startup and submission checks, and never admit known AM4 controllers. Only PID, exact creation timestamp, fingerprint and approval timing are persisted locally. Command lines stay in memory and the explicit elevated console. No automatic upgrade of legacy approvals, elevation, controller start or mode change occurs during review. See operator/README.md for the guided procedure.
+Concurrency uses current process and TCP-owner evidence rather than counts of unreadable shells. The existing ownership and mutex are unchanged. Known AM4 PowerShell/Node entrypoints and foreign active loopback CDP clients block; opaque sessions without AM4 evidence are diagnostic warnings. Incomplete process or network inspection fails closed. The initial inventory is repeated after acquiring the mutex and before submissions. No attestation files are read or written; previously collected approvals remain local and untouched. Command lines stay in memory; safe identities and limitations appear in the requested latest status/diagnostic report only.
+
+Windows cannot prove that every hidden idle elevated script is unrelated, and external clients can connect after an observation. This limitation and the proportionate layered protection are documented in operator/README.md. Stronger guarantees would require privileged monitoring/access enforcement; they are not claimed by this implementation.

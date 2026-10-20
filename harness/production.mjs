@@ -14,7 +14,6 @@ import { OperatorSession } from '../operator/control.mjs';
 import { purchaseDecision,reconcilePurchase } from './purchasing.mjs';
 import { settings } from './settings.mjs';
 import { waitBetweenPasses } from './cadence.mjs';
-import {loadApprovals,approvalsValid} from '../operator/process-attestation.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url))),args=process.argv.slice(2),config={};
 for(let i=0;i<args.length;i+=2){if(!/^--[a-z-]+$/.test(args[i])||args[i+1]===undefined)throw new Error('INVALID_PRODUCTION_ARGUMENT');config[args[i].slice(2)]=Number(args[i+1]);}
 const cycle=config['cycle-seconds']??settings.cycleSeconds,maxDepartures=config['max-departures']??8,maxMaintenance=config['max-maintenance']??2,csvBatch=config['csv-batch']??10,maxPasses=config['max-passes']??0,passSeconds=config['pass-seconds']??600;
@@ -64,8 +63,7 @@ async function purchaseMarkets(trigger){
 }
 try{
   runner.operator=new OperatorSession(join(root,'operator','state'),'AUTOMATIC');
-  const approved=unknown=>approvalsValid(loadApprovals(join(root,'operator','state')),unknown);
-  const guardOptions={ignoreControllerPids:[process.ppid],admitUnreadable:approved,revalidateUnreadable:approved};
+  const guardOptions={ignoreControllerPids:[process.ppid]};
   for(let attempt=0;;attempt++){
     try{runner.guard=await acquireGuard(()=>runner.cdp?.close(),guardOptions);break;}
     catch(error){if(attempt>=4||!['CONTROLLER_OR_LEGACY_SCRIPT_RUNNING','CONTROLLER_LOCK_BUSY'].includes(error.message))throw error;runner.operator.assertCanCommit();await sleep(500);}

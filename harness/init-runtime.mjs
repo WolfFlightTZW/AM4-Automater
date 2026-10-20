@@ -22,7 +22,6 @@ export function initializeRuntime(directory,{confirmNoExistingRecovery=false}={}
   } finally {ledger.close();}
   const operatorPath=join(staging,'operator'),control=new OperatorControl(operatorPath);
   try{if(control.status().mode!=='PAUSED/MANUAL')throw new Error('INITIAL_MODE_NOT_MANUAL');}finally{control.close();}
-  writeFileSync(join(operatorPath,'legacy-exclusion.json'),JSON.stringify({processes:[]},null,2)+'\n');
   const compatibilityPath=join(staging,'compatibility');mkdirSync(compatibilityPath);
   writeFileSync(join(compatibilityPath,'operations-state.json'),JSON.stringify({schema:1,transactions:{}},null,2)+'\n');
   for(const p of ['harness/state','operator/state','state'])if(existsSync(join(root,p)))throw new Error('RUNTIME_APPEARED_DURING_INITIALIZATION');

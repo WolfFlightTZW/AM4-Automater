@@ -33,7 +33,7 @@ After a completed pass the central setting `harness/production-settings.json: cy
 
 The existing operator controls provide AUTOMATIC, PAUSED/MANUAL and TESTING. Pause prevents new work and permits verification of a submitted action. SAFE TO USE GAME requires released ownership and expired command quarantine. Stale ownership forces manual mode; expired command tokens cannot click. A pause never resumes itself. A maintenance task may resume production only if it originally interrupted AUTOMATIC and no later operator request superseded that authorization.
 
-Unreadable elevated PowerShell processes require explicit operator inspection, not a blanket exemption. The guided local review binds PID, exact creation time and elevated-inspected identity; it rechecks before approval and resume. Review requests expire after ten minutes; approvals expire after 24 hours and are revalidated before submissions. Review does not arm or start production. Procedure and failure handling are maintained in operator/README.md.
+Process visibility alone does not establish an AM4 conflict. Exclusive ownership and the mutex remain authoritative for cooperating controllers; identifiable AM4 entrypoints and foreign live CDP clients block operation. Unreadable unrelated sessions are warnings, not mandatory attestations. Process/TCP inspection failures fail closed. See operator/README.md for diagnostics and the Windows visibility limitation.
 
 ## Transaction journal
 
