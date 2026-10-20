@@ -10,9 +10,9 @@ One background Node.js controller operates the existing Steam AM4 session throug
 - Ordinary elevated PowerShell sessions do not require approval. For an actual startup conflict, open **AM4 Process Review.cmd** for read-only process/CDP-client diagnostics; see [operator/README.md](operator/README.md#duplicate-controller-protection).
 - Leave Steam AM4 open with its existing CDP endpoint on `127.0.0.1:9222`. Node.js 24+ is required; PowerShell launchers locate PATH or the existing bundled runtime.
 
-The normal delay **after a completed pass is 10 seconds**. Change `cycleSeconds` in **`harness/production-settings.json`**; no script editing is needed. `-CycleSeconds` remains an explicit per-run diagnostic override. Passes never overlap. Unresolved transactions increase the inter-pass wait to at least 30 seconds. Disconnect, lost ownership, or competing automation stops the controller safely; resolve the issue and explicitly start again.
+The normal delay **after a completed pass is 10 seconds**. Change `cycleSeconds` in **`harness/production-settings.json`**; no script editing is needed. `-CycleSeconds` remains an explicit per-run diagnostic override. Passes never overlap. Broader recovery uncertainty increases the inter-pass wait to at least 30 seconds. An isolated, identity-bound maintenance submission uncertainty holds only that aircraft and reserves its funds; it does not slow the fleet. Disconnect, lost ownership, or competing automation stops the controller safely; resolve the issue and explicitly start again.
 
-A normal pass buys qualifying resources, reconciles uncertain submissions from AM4, performs up to two eligible individual maintenance actions, dispatches up to eight eligible aircraft, and updates the high-cycle CSV. An unavailable A-check never gates other work.
+A normal pass buys qualifying resources, reconciles uncertain submissions from AM4, performs up to two eligible individual maintenance actions, dispatches up to sixteen eligible aircraft, and updates the high-cycle CSV. An unavailable A-check never gates other work. Repairs require wear >9% and an available individual Repair action. Production acknowledges the submission and moves on; AM4 manages maintenance completion. Departure requires an enabled Depart control and all established policy checks.
 
 The exact purchasing, maintenance, reserve, exclusion, and departure rules are defined once in [DESIGN.md](DESIGN.md). Nothing sells or buys aircraft.
 
@@ -20,7 +20,7 @@ The exact purchasing, maintenance, reserve, exclusion, and departure rules are d
 
 | Path | Purpose |
 |---|---|
-| `Reports/operations-latest.json` | Current/last pass, actions, duration and measured completed idle |
+| `Reports/operations-latest.json` | Current/last pass, action/inspection timings, dispatch counts, duration and measured idle |
 | `Reports/operations-history.jsonl` | Optional local pass history; disabled by default |
 | `Reports/purchase-decisions.jsonl` | Purchase decisions and explicit skip reasons |
 | `Reports/high-hour-aircraft.csv` | One row per current qualifying aircraft, >500 completed cycles |

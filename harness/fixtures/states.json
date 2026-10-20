@@ -7,7 +7,8 @@
         "status": "landed",
         "location": "landedList",
         "grounded": "0",
-        "wear": 12.5
+        "wear": 12.5,
+        "aircraftId": "123"
       }
     ],
     "maintenance": {
@@ -47,7 +48,8 @@
         "status": "landed",
         "location": "landedList",
         "grounded": "1",
-        "wear": 12.5
+        "wear": 12.5,
+        "aircraftId": "123"
       }
     ],
     "maintenance": {
@@ -80,7 +82,8 @@
         "status": "landed",
         "location": "landedList",
         "grounded": "0",
-        "wear": 0
+        "wear": 0,
+        "aircraftId": "123"
       }
     ],
     "maintenance": {

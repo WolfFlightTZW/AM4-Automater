@@ -6,15 +6,17 @@ import { Cdp } from './cdp.mjs';
 import { acquireGuard } from './guard.mjs';
 import { domExpression } from './dom.mjs';
 import { renderBlock, readSource } from './source.mjs';
-import { maintenanceEligibility, departureEligibility, reconcile, wholeQuantity, verifyPurchase } from './policy.mjs';
+import { maintenanceEligibility, departureEligibility, reconcile, reconcileRecovery, wholeQuantity, verifyPurchase } from './policy.mjs';
 import { readProductionHolds } from './store.mjs';
 import { OperatorSession } from '../operator/control.mjs';
 import { ResourceCache } from './resource-cache.mjs';
 import { settings } from './settings.mjs';
+import {validAircraftId,identityRows,excludedAircraft} from './identity.mjs';
 
 export class Runner {
   constructor(options, source, store) {
     this.options = options; this.source = source; this.store = store; this.deadline = Date.now() + options.maxSeconds * 1000;
+    this.aircraftIds=new Map();this.excludedIds=new Set();
     this.budget = options.maxActions; this.sequence = 0;
     this.resources=new ResourceCache({maxAgeMs:settings.resourceObservationMaxAgeMs});
   }
@@ -42,19 +44,22 @@ export class Runner {
   }
   dom(method, args = []) { return this.evaluate(domExpression(method, args), 'DOM.' + method); }
   async nav(view) { const result = await this.dom('navigate', [view]); if (!result.ok) throw new Error(result.reason); }
+  measure(name,operation){return this.performance?this.performance.measure(name,operation):operation();}
   async markets({fresh=false}={}) {
     try{this.operator?.assertCanCommit();}catch(error){this.resources.invalidate();throw error;}
-    return this.resources.read(()=>this.evaluate(this.source.blocks.marketJs,'source.marketJs'),{fresh});
+    return this.resources.read(()=>this.measure('resourceInspection',async()=>{const value=await this.evaluate(this.source.blocks.marketJs,'source.marketJs');for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);return value;}),{fresh});
   }
-  async fleet() { return this.evaluate(this.source.blocks.fleetJs, 'source.fleetJs'); }
+  async fleet() { const rows=await this.measure('fleetScan',()=>this.evaluate(this.source.blocks.fleetJs,'source.fleetJs'));this.aircraftIds.clear();for(const a of rows){if(validAircraftId(a.aircraftId)&&rows.filter(r=>r.registration===a.registration).length===1)this.aircraftIds.set(a.registration,a.aircraftId);if(a.registration==='N-145'&&validAircraftId(a.aircraftId))this.excludedIds.add(a.aircraftId);}return rows; }
   async snapshot({ markets = false } = {}) {
     const result = { captured: new Date().toISOString(), fleet: await this.fleet() };
     if (markets) result.markets = await this.markets();
-    await this.nav('schedule'); result.schedule = await this.dom('schedule');
-    await this.nav('plan'); result.maintenance = await this.dom('maintenance');
+    await this.measure('maintenanceCheck',async()=>{await this.nav('schedule'); result.schedule = await this.dom('schedule');
+    await this.nav('plan'); result.maintenance = await this.dom('maintenance');});
+    for(const row of result.maintenance.records||[])if(row.registration==='N-145'&&validAircraftId(row.id))this.excludedIds.add(row.id);
+    result.excludedAircraftIds=[...this.excludedIds];
     return result;
   }
-  holds(target, exceptId) { return [...this.store.holds(target, exceptId), ...readProductionHolds(this.options.productionRoot, target)]; }
+  holds(target, exceptId) { return [...this.store.holds(target, exceptId,this.aircraftIds.get(target)), ...readProductionHolds(this.options.productionRoot, target)]; }
   verifySource() { if (readSource(this.options.productionRoot).hash !== this.source.hash) throw new Error('PRODUCTION_SOURCE_CHANGED_DURING_TEST'); }
   async confirm(kind, target, cost) {
     if (!this.options.live) throw new Error('LIVE_MODE_REQUIRED');
@@ -150,10 +155,10 @@ export class Runner {
     quote = current;
     await this.guard.check();
     this.verifySource();
-    const action = this.store.intent({ registration: reg, kind, aircraftId: e.row.id, before: fresh, quote });
+    const action = this.store.intent({ registration: reg, kind, aircraftId: e.row.id, before: fresh, quote,completionObservation:Boolean(chain) });
     report.checkpoint = action.id; report.actionAttempted = { name: kind, submitted: 'POSSIBLE', actionId: action.id };
     this.store.saveCase(report); // Crash after this point is resumable without repeating a click.
-    const commit = await this.dom('commit', [{ registration: reg, kind, id: e.row.id, quote, actionId: action.id }]);
+    const commit = await this.dom('commit', [{ registration: reg, kind, id: e.row.id, quote, actionId: action.id,excludedAircraftIds:[...this.excludedIds] }]);
     report.actionAttempted.submitted = commit.clicked;
     report.gameResponse = { eligibility: e, quote, commit };
     if (!commit.clicked) { action.state = 'NOT_SUBMITTED'; this.store.saveAction(action); report.reason = commit.reason; report.endingState = { commit }; return; }
@@ -163,8 +168,9 @@ export class Runner {
     const observed=await this.snapshot();
     // Scheduling verification belongs to the current action. Waiting for a maintenance
     // timer does not keep the interface occupied across a manual-pause request.
-    const first=reconcile(action,observed);action.state=first.state;action.scheduleSeen ||= first.scheduleSeen;this.store.saveAction(action);
+    const first=this.options.scenario==='Production'?reconcileRecovery(action,observed):reconcile(action,observed);action.state=first.state;action.scheduleSeen ||= first.scheduleSeen;this.store.saveAction(action);
     this.operator?.end(first.state==='SCHEDULED_VERIFIED'?'SCHEDULED':'RETURNED');
+    if(this.options.scenario==='Production'){report.endingState=observed;report.gameResponse.reconciliation=first;report.result=first.result;report.reason=first.reason;return;}
     await this.observeAction(report, action, observed, chain);
   }
   async pause(ms) { await new Promise(resolve => setTimeout(resolve, Math.min(ms, this.remaining()))); }
@@ -186,10 +192,10 @@ export class Runner {
     if (action.state === 'COMPLETED_VERIFIED') {
       snapshot.markets = await this.markets();
       // Eligibility only. A chain never silently launches a previously proven departure.
-      const selected = await this.evaluate(renderBlock(this.source.blocks.selectJs, action.registration), 'source.selectJs');
+      const selected = await this.evaluate(renderBlock(this.source.blocks.selectJs, action.registration,null,action.aircraftId), 'source.selectJs');
       let flight = { hours: null };
       if (selected.ok) { await this.pause(650); flight = await this.dom('flight'); }
-      const hours = flight.registrations?.length === 1 && flight.registrations[0] === action.registration ? flight.hours : null;
+      const hours = flight.aircraftId===action.aircraftId&&flight.registrations?.length === 1 && flight.registrations[0] === action.registration ? flight.hours : null;
       report.gameResponse.departureEligibility = departureEligibility(snapshot, action.registration, this.holds(action.registration, action.id), hours);
       report.gameResponse.flight = flight;
       report.result = !chain || report.gameResponse.departureEligibility.eligible ? 'PASS' : 'INCONCLUSIVE';
@@ -199,30 +205,33 @@ export class Runner {
   }
   async departure(report) {
     const reg = this.options.registration; if (!reg) throw new Error('EXPLICIT_REGISTRATION_REQUIRED');
-    report.startingState = await this.snapshot({ markets: true });
-    const selected = await this.evaluate(renderBlock(this.source.blocks.selectJs, reg), 'source.selectJs');
+    const offered=this.dispatchSnapshot;this.dispatchSnapshot=null;
+    report.startingState=offered&&offered.sequence===this.sequence&&Date.now()-(offered.finished??Date.parse(offered.value.captured))<=2000?offered.value:await this.snapshot({markets:true});
+    const initial=identityRows(report.startingState,reg);
+    const aircraftId=initial.id;if(!validAircraftId(aircraftId))throw new Error('AIRCRAFT_ID_REQUIRED');
+    const selected = await this.evaluate(renderBlock(this.source.blocks.selectJs, reg,null,aircraftId), 'source.selectJs');
     if (!selected.ok) throw new Error('DEPARTURE_SELECTION_FAILED');
     await this.pause(650); let flight = await this.dom('flight');
-    const hours = flight.registrations?.length === 1 && flight.registrations[0] === reg ? flight.hours : null;
+    const hours = flight.aircraftId===aircraftId&&flight.registrations?.length === 1 && flight.registrations[0] === reg ? flight.hours : null;
     const eligible = departureEligibility(report.startingState, reg, this.holds(reg), hours);
     report.gameResponse = { selected, flight, eligible };
     if (!eligible.eligible) { report.endingState = report.startingState; report.reason = 'DEPARTURE_NOT_ELIGIBLE'; return; }
     if (!this.options.live) { report.result = 'PASS'; report.reason = 'DEPARTURE_ELIGIBILITY_ONLY'; report.endingState = report.startingState; return; }
     await this.confirm('departure', reg, null);
     const fresh = await this.snapshot({ markets: true });
-    await this.evaluate(renderBlock(this.source.blocks.selectJs, reg), 'source.selectJs');
+    await this.evaluate(renderBlock(this.source.blocks.selectJs, reg,null,aircraftId), 'source.selectJs');
     await this.pause(650); flight = await this.dom('flight');
-    if (flight.registrations?.length !== 1 || flight.registrations[0] !== reg || !departureEligibility(fresh, reg, this.holds(reg), flight.hours).eligible) throw new Error('DEPARTURE_PRECOMMIT_CHANGED');
+    if (identityRows(fresh,reg).id!==aircraftId||excludedAircraft(fresh,identityRows(fresh,reg).aircraft)||flight.aircraftId!==aircraftId||flight.registrations?.length !== 1 || flight.registrations[0] !== reg || !departureEligibility(fresh, reg, this.holds(reg), flight.hours).eligible) throw new Error('DEPARTURE_PRECOMMIT_CHANGED');
     await this.guard.check();
     this.verifySource();
-    const action = this.store.intent({ registration: reg, kind: 'departure', before: fresh });
+    const action = this.store.intent({ registration: reg, kind: 'departure', aircraftId, before: fresh });
     report.checkpoint = action.id; report.actionAttempted = { name: 'departure', submitted: 'POSSIBLE', actionId: action.id }; this.store.saveCase(report);
-    const result = await this.evaluate(renderBlock(this.source.blocks.departJs, reg), 'source.departJs');
+    const result = await this.evaluate(renderBlock(this.source.blocks.departJs, reg,null,aircraftId), 'source.departJs');
     report.actionAttempted.submitted = Boolean(result.ok);
     action.state = result.ok ? 'UNKNOWN' : 'NOT_SUBMITTED'; this.store.saveAction(action); report.gameResponse.commit = result;
     for (let count = 0; result.ok && count < 8; count++) {
       await this.pause(750); const fleet = await this.fleet(); report.endingState = { fleet };
-      const rows = fleet.filter(r => r.registration === reg);
+      const rows = fleet.filter(r => r.aircraftId === aircraftId);
       if (rows.length === 1 && rows[0].location === 'inflightList') { action.state = 'DEPARTED_VERIFIED'; this.store.saveAction(action); report.result = 'PASS'; report.reason = 'EXISTING_DEPARTURE_ACTION_VERIFIED'; break; }
     }
     report.endingState ||= { fleet: await this.fleet() };

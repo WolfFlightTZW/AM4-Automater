@@ -21,7 +21,7 @@ export function createDom(doc = document) {
       const control = row.querySelector('[id^="controls"]');
       const id = control?.id?.match(/^controls(\d+)$/)?.[1] || null;
       const buttons = [...row.querySelectorAll('button,a')].filter(enabled).map(handler).filter(x => x && x.id === id && !x.commit);
-      return { id, registration: String(row.dataset.reg || '').toUpperCase(), wear: number(row.dataset.wear), hoursToCheck: number(row.dataset.hours), atBase: row.dataset.base === '1', availableActions: buttons.map(b => b.kind) };
+      return { id, registration: String(row.dataset.reg || ''), wear: number(row.dataset.wear), hoursToCheck: number(row.dataset.hours), atBase: row.dataset.base === '1', availableActions: buttons.map(b => b.kind) };
     });
     return { ok: records.length > 0, records, evidence: { selector: '#maintAction .maint-list-sort', rows: records.length } };
   }
@@ -44,7 +44,8 @@ export function createDom(doc = document) {
       const rows = [...root.querySelectorAll('#calContainer .maintBox')];
       if (labels.length !== rows.length) unknownRows++;
       for (let i = 0; i < rows.length; i++) {
-        const regs = registrations(labels[i]?.innerText);
+        const registration=clean(labels[i]?.innerText);
+        const regs=registration?[registration]:[];
         const aircraftId = (labels[i]?.getAttribute('onclick') || '').match(/routes_main\.php\?mode=details&id=(\d+)/)?.[1];
         const bars = [...rows[i].querySelectorAll('[onclick]')];
         if (regs.length !== 1 || !aircraftId || !bars.length) { unknownRows++; continue; }
@@ -59,11 +60,13 @@ export function createDom(doc = document) {
     if (candidates.length === 1) for (const row of candidates[0].querySelectorAll('tr')) {
       if (row.querySelector('th')) continue;
       const content = clean(row.innerText); if (!content) continue;
-      const regs = registrations(content);
+      const cells=[...row.querySelectorAll('td')];
+      const linked=cells.flatMap(c=>[...c.querySelectorAll('[onclick]')]).map(e=>({registration:clean(e.innerText),aircraftId:(e.getAttribute('onclick')||'').match(/routes_main\.php\?mode=details&id=(\d+)/)?.[1]})).filter(e=>e.registration&&e.aircraftId);
+      const regs=linked.length===1?[linked[0].registration]:registrations(content);
       if (!regs.length && /no (?:scheduled |pending |planned )?(?:maintenance|repairs?|checks?)|nothing scheduled/i.test(content)) continue;
       const kinds = [(/\brepair\b/i.test(content) ? 'repair' : null), (/\bA[- ]?check\b/i.test(content) ? 'check' : null)].filter(Boolean);
       if (regs.length !== 1 || kinds.length !== 1) { unknownRows++; continue; }
-      entries.push({ registration: regs[0], kind: kinds[0], evidence: content.slice(0, 600) });
+      entries.push({ registration: regs[0], aircraftId:linked.length===1?linked[0].aircraftId:null, kind: kinds[0], evidence: content.slice(0, 600) });
     }
     const pagination = [...root.querySelectorAll('a,button,select')].some(e => visible(e) && /next|page\s+\d|show more|load more/i.test(clean(e.innerText)));
     const explicitEmpty = !registrations(text).length && /no (?:scheduled |pending |planned )?(?:maintenance|repairs?|checks?)|nothing scheduled/i.test(text);
@@ -112,7 +115,7 @@ export function createDom(doc = document) {
     const buttons = [...section.querySelectorAll('button,a,input[type="submit"]')].filter(enabled).filter(e => {
       const h = handler(e); return h && h.commit && h.kind === kind && h.id === id;
     });
-    const rows = maintenance().records.filter(r => r.registration === registration && r.id === id);
+    const rows = maintenance().records.filter(r => r.id === id && r.registration.toUpperCase() === registration.toUpperCase());
     const startNow = /(?:Repair start|Maintenance start)\s+Now\b/i.test(text);
     const cost = costMatch ? number(costMatch[1]) : null;
     const time = text.match(/(?:Repair|Check) time\s+(\d{2,3}:\d{2}:\d{2})/i)?.[1] || null;
@@ -120,7 +123,7 @@ export function createDom(doc = document) {
     return { ok, reason: ok ? 'EXACT_ID_TYPE_QUOTE_AND_CONTROL' : 'PLANNER_AMBIGUOUS_OR_NOT_AVAILABLE', registration, kind, id, cost, time, startNow, row: rows[0] || null, finalControls: buttons.length, evidence: text.slice(0, 2000) };
   }
   async function openPlanner({ registration, kind, id }) {
-    const rows = [...doc.querySelectorAll('#maintAction .maint-list-sort')].filter(r => String(r.dataset.reg || '').toUpperCase() === registration && r.querySelector('[id^="controls"]')?.id === 'controls' + id);
+    const rows = [...doc.querySelectorAll('#maintAction .maint-list-sort')].filter(r => r.querySelector('[id^="controls"]')?.id === 'controls' + id && String(r.dataset.reg||'').toUpperCase() === registration.toUpperCase());
     if (rows.length !== 1) return { ok: false, reason: 'EXACT_MAINTENANCE_ROW_NOT_FOUND' };
     const controls = [...rows[0].querySelectorAll('button,a')].filter(enabled).filter(e => { const h = handler(e); return h && !h.commit && h.id === id && h.kind === kind; });
     if (controls.length !== 1) return { ok: false, reason: 'INDIVIDUAL_ACTION_NOT_AVAILABLE' };
@@ -129,14 +132,14 @@ export function createDom(doc = document) {
     return inspectPlanner(registration, kind, id);
   }
   function cash() { const m = clean(doc.body?.innerText).match(/\bACCOUNT\s*\$\s*([\d,]+)/i); return m ? number(m[1]) : null; }
-  function commit({ registration, kind, id, quote, actionId }) {
+  function commit({ registration, kind, id, quote, actionId, excludedAircraftIds=[] }) {
     const fresh = inspectPlanner(registration, kind, id);
     if (!fresh.ok || fresh.cost !== quote.cost || fresh.time !== quote.time || fresh.row.wear !== quote.row.wear || fresh.row.hoursToCheck !== quote.row.hoursToCheck || !fresh.row.atBase)
       return { ok: false, clicked: false, reason: 'PRECOMMIT_PLANNER_CHANGED', fresh };
     const balance = cash();
     if (!Number.isSafeInteger(balance) || balance - fresh.cost < 100000000 || browserAutomation().length) return { ok: false, clicked: false, reason: 'CASH_OR_BROWSER_AUTOMATION_GATE' };
-    const fleet = [...doc.querySelectorAll('#landedList .flight-list[data-reg]')].filter(r => r.dataset.reg === registration && r.dataset.grounded === '0' && clean(r.querySelector('[id^="flightStatusCounter"]')?.textContent).toLowerCase() === 'landed');
-    if (fleet.length !== 1 || registration === 'N-145' || (kind === 'repair' ? !(fresh.row.wear > 9) : !(fresh.row.hoursToCheck <= 20))) return { ok: false, clicked: false, reason: 'PRECOMMIT_ELIGIBILITY_CHANGED' };
+    const fleet = [...doc.querySelectorAll('#landedList .flight-list[data-reg]')].filter(r => r.id === 'flightStatus'+id && r.dataset.reg === registration && r.dataset.grounded === '0' && clean(r.querySelector('[id^="flightStatusCounter"]')?.textContent).toLowerCase() === 'landed');
+    if (fleet.length !== 1 || registration === 'N-145' || excludedAircraftIds.includes(id) || (kind === 'repair' ? !(fresh.row.wear > 9) : !(fresh.row.hoursToCheck <= 20))) return { ok: false, clicked: false, reason: 'PRECOMMIT_ELIGIBILITY_CHANGED' };
     const key = id + ':' + kind;
     globalThis.__am4HarnessAttempts ||= {};
     if (globalThis.__am4HarnessAttempts[key]) return { ok: false, clicked: false, reason: 'PAGE_ATTEMPT_ALREADY_RECORDED' };
@@ -151,7 +154,11 @@ export function createDom(doc = document) {
     const panel = doc.querySelector('#flightInfo');
     if (!visible(panel)) return { hours: null, reason: 'FLIGHT_PANEL_NOT_RECOGNIZED' };
     const m = clean(panel.innerText).match(/Flight time\s+(\d{1,3}):(\d{2}):(\d{2})\b/i);
-    return { hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations: registrations(panel.innerText), evidence: clean(panel.innerText).slice(0, 1500) };
+    const buttons=[...doc.querySelectorAll('button')].filter(e=>visible(e)&&!e.disabled&&/^flightInfoDepart[0-9]+$/.test(e.id)&&clean(e.innerText)==='Depart');
+    const aircraftId=buttons.length===1?buttons[0].id.slice('flightInfoDepart'.length):null;
+    const rows=aircraftId?[...doc.querySelectorAll('.flight-list[data-reg]')].filter(r=>r.id==='flightStatus'+aircraftId):[];
+    const regs=rows.length===1?[String(rows[0].dataset.reg||'')]:[];
+    return { aircraftId, hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
   }
   return { maintenance, schedule, controls, browserAutomation, navigate, openPlanner, inspectPlanner, commit, response, flight, number, handler, registrations };
 }

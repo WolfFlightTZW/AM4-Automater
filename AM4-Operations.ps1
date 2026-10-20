@@ -79,6 +79,7 @@ function Invoke-AM4([string]$js){
 $marketJs=@'
 (async()=>{
  const clean=s=>String(s||'').replace(/\s+/g,' ').trim(),vis=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden',pause=ms=>new Promise(r=>setTimeout(r,ms));
+ const inspectionStarted=Date.now();
  const menu=[...document.querySelectorAll('#smallMainMenu [onclick],.menu-btn-new[onclick]')].filter(vis).find(e=>clean(e.innerText).toUpperCase()==='FUEL');
  if(!menu)return JSON.stringify({ok:false,reason:'Fuel menu unavailable'});
  menu.click();await pause(750);
@@ -92,10 +93,10 @@ $marketJs=@'
   const account=clean(document.body?.innerText).match(/\bACCOUNT\s*\$\s*([\d,]+)/i);
   return {ok:!!(price&&cap&&hold&&account),kind,pricePer1000:n(price?.[1]),capacityUsed:n(cap?.[1]),capacityMax:n(cap?.[2]),holding:n(hold?.[1]),cash:n(account?.[1])};
  };
- const fuel=read('fuel');
+ const fuel=read('fuel'),fuelMs=Date.now()-inspectionStarted,co2Started=Date.now();
  const tab=document.querySelector('#popBtn2');if(!tab||!vis(tab)||!/CO2|CO\u2082/i.test(clean(tab.innerText)))return JSON.stringify({ok:false,reason:'CO2 tab unavailable',fuel});
  tab.click();await pause(850);const co2=read('co2');
- return JSON.stringify({ok:fuel.ok&&co2.ok,fuel,co2});
+ return JSON.stringify({ok:fuel.ok&&co2.ok,fuel,co2,inspectionMs:{fuel:fuelMs,co2:Date.now()-co2Started}});
 })()
 '@
 $purchaseJsTemplate=@'
@@ -152,7 +153,7 @@ $fleetJs=@'
 (()=>JSON.stringify([...document.querySelectorAll('.flight-list[data-reg]')].map(r=>{
  const status=(r.querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase();
  const wt=(r.querySelector('[id^="flightStatusWear"]')?.textContent||'').trim();
- return {registration:r.dataset.reg,status,wear:/^\d+(?:\.\d+)?$/.test(wt)?Number(wt):null,grounded:r.dataset.grounded,location:r.parentElement?.id||null};
+ return {aircraftId:r.id.match(/^flightStatus(\d+)$/)?.[1]||null,registration:r.dataset.reg,status,wear:/^\d+(?:\.\d+)?$/.test(wt)?Number(wt):null,grounded:r.dataset.grounded,location:r.parentElement?.id||null};
 }).filter(r=>r.registration)))()
 '@
 $maintJs=@'

@@ -37,7 +37,7 @@ From the canonical project in PowerShell:
 
 ```powershell
 $env:AM4_SOURCE_ROOT = 'H:\AM4 automate'
-node --test harness/tests/offline.test.mjs harness/tests/purchasing.test.mjs harness/tests/fleet-report.test.mjs harness/tests/recovery.test.mjs harness/tests/layout.test.mjs harness/tests/privacy.test.mjs operator/control.test.mjs operator/process-diagnostics.test.mjs
+node --test harness/tests/offline.test.mjs harness/tests/purchasing.test.mjs harness/tests/fleet-report.test.mjs harness/tests/recovery.test.mjs harness/tests/layout.test.mjs harness/tests/privacy.test.mjs harness/tests/production.test.mjs operator/control.test.mjs operator/process-diagnostics.test.mjs
 ```
 
 Use meaningful targeted tests for small changes, and broader regression checks for transaction, policy, ownership or launcher changes. Do not submit unnecessary game transactions just to prove known behavior. Report live verification separately from offline tests and code changes.

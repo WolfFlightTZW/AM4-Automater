@@ -15,6 +15,8 @@ Node.js 24+ supplies WebSocket, SQLite and node:test. No npm dependencies or add
 | `policy.mjs`, `purchasing.mjs` | Eligibility, integer quantities, cost verification and conservative reconciliation |
 | `runner.mjs` | Shared actions, fresh checks, intent-before-send and bounded verification |
 | `store.mjs` | Compact durable recovery journal; indexed uncertainty queries; bounded summaries |
+| `identity.mjs` | Current-DOM numeric IDs, full display names and session-scoped exclusion identity |
+| `performance.mjs` | Bounded in-memory per-pass timings, counters and recovery-backoff classification |
 | `resource-cache.mjs` | Short-lived observed values only; invalidation, no predicted balance ledger |
 | `settings.mjs`, `production-settings.json` | Validated central cadence/cache/backoff settings |
 | `cadence.mjs` | Awaited inter-pass wait with frequent ownership checks and recovery backoff |
@@ -29,7 +31,7 @@ AM4 owns airline state. The worker's operational snapshots and resource cache ar
 
 `state/recovery.sqlite` uses schema version 2. `actions` stores minimal transaction recovery evidence and compact acknowledged/terminal summaries. `events` is disabled for routine operation; a named diagnostic can opt into a capped event set, never raw CDP responses. `cases` contains compact case summaries; no full-state JSON is duplicated to per-case files. `metadata` identifies the schema, migration validation and rollback archive.
 
-Queries for unresolved actions use the state index; target holds use `(target,state)`. Only PENDING and UNKNOWN are recovery holds. Acknowledged scheduling is recorded as SCHEDULED_VERIFIED but AM4 determines subsequent maintenance/flight availability. An explicit ResumeChain can still observe that checkpoint without repeating its action.
+Queries for unresolved actions use the state index; target holds use `(target,state)`. Only PENDING and UNKNOWN are recovery holds. Target queries include a numeric aircraft ID expression index, so a display-name change cannot bypass an uncertain submission. Acknowledged scheduling is recorded as SCHEDULED_VERIFIED but AM4 determines subsequent maintenance/flight availability. Production stops observing a maintenance transaction once scheduling is acknowledged; it never manages completion. Only an explicitly requested bounded test chain retains pre-action completion evidence. Older checkpoints remain readable and are not cleared by deployment.
 
 Current production/harness entrypoints require an existing migration-validated ledger. They must not silently initialize a replacement when recovery data is missing. Offline fixtures create isolated databases. SQLite WAL and synchronous FULL protect intent-before-send; state changes and optional diagnostic transition events commit atomically. The pre-migration `harness.sqlite` is only in the rollback archive.
 
@@ -72,3 +74,5 @@ Known adapter constraint: maintenance schedule text parsing currently recognizes
 Concurrency uses current process and TCP-owner evidence rather than counts of unreadable shells. The existing ownership and mutex are unchanged. Known AM4 PowerShell/Node entrypoints and foreign active loopback CDP clients block; opaque sessions without AM4 evidence are diagnostic warnings. Incomplete process or network inspection fails closed. The initial inventory is repeated after acquiring the mutex and before submissions. No attestation files are read or written; previously collected approvals remain local and untouched. Command lines stay in memory; safe identities and limitations appear in the requested latest status/diagnostic report only.
 
 Windows cannot prove that every hidden idle elevated script is unrelated, and external clients can connect after an observation. This limitation and the proportionate layered protection are documented in operator/README.md. Stronger guarantees would require privileged monitoring/access enforcement; they are not claimed by this implementation.
+
+Performance data is a single overwritten pass report, not a retained event stream. Timings are inclusive and overlap. See DESIGN.md for cadence classification, identity binding and immediate-observation reuse.

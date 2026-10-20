@@ -29,20 +29,38 @@ const inactiveStates=new Set(['Listen','Bound','Closed','TimeWait']);
 const loopback=address=>/^(?:127(?:\.\d{1,3}){3}|::1|::ffff:127(?:\.\d{1,3}){3})$/i.test(address||'');
 export const VISIBILITY_LIMIT='Unreadable command lines do not prove a process is unrelated. Hidden idle legacy scripts and clients connecting after an observation cannot be completely excluded without privileged monitoring. Keep unsupported automation stopped.';
 export function concurrencyError(code,report){return Object.assign(new Error(code),{processDiagnostics:report});}
-// One bounded Windows inventory; never connect to CDP or persist command lines.
-export async function inspectProcesses(){
-  if(process.platform!=='win32')throw new Error('LIVE_REQUIRES_WINDOWS');
-  const command=`$ErrorActionPreference='Stop'
-try { $clients=@(Get-NetTCPConnection -ErrorAction Stop | Where-Object { $_.RemotePort -eq 9222 -and $_.RemoteAddress -match '^(127\\.|::1$|::ffff:127\\.)' -and $_.State.ToString() -notin @('Listen','Bound','Closed','TimeWait') } | ForEach-Object { [pscustomobject]@{pid=$_.OwningProcess;remoteAddress=$_.RemoteAddress;remotePort=$_.RemotePort;state=$_.State.ToString()} }) } catch { [pscustomobject]@{error='CDP_CLIENT_INSPECTION_UNAVAILABLE'} | ConvertTo-Json -Compress; exit 2 }
-try { $ownerIds=@($clients | ForEach-Object { $_.pid }); $items=@(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -match '^(powershell|pwsh|node)(\\.exe)?$' -or $_.ProcessId -in $ownerIds } | ForEach-Object { $created=$null; try { $created=$_.CreationDate.ToUniversalTime().ToString('o') } catch {}; [pscustomobject]@{pid=$_.ProcessId;parentPid=$_.ParentProcessId;name=$_.Name;sessionId=$_.SessionId;created=$created;commandLine=$_.CommandLine;executablePath=$_.ExecutablePath} }) } catch { [pscustomobject]@{error='PROCESS_INSPECTION_UNAVAILABLE'} | ConvertTo-Json -Compress; exit 2 }
+// Filter at the CIM provider, not after enumerating every socket/process. No CDP calls.
+export const inventoryCommand=`$ErrorActionPreference='Stop'
+[pscustomobject]@{phase='TCP'} | ConvertTo-Json -Compress
+try { $clients=@(Get-CimInstance -Namespace root/StandardCimv2 -ClassName MSFT_NetTCPConnection -Filter 'RemotePort = 9222' -ErrorAction Stop | Where-Object { $_.RemoteAddress -match '^(127\\.|::1$|::ffff:127\\.)' -and [int]$_.State -notin @(1,2,11,100) } | ForEach-Object { [pscustomobject]@{pid=$_.OwningProcess;remoteAddress=$_.RemoteAddress;remotePort=$_.RemotePort;state=$(switch([int]$_.State){3{'SynSent'}4{'SynReceived'}5{'Established'}6{'FinWait1'}7{'FinWait2'}8{'CloseWait'}9{'Closing'}10{'LastAck'}default{'Unknown'}});rawState=[int]$_.State} }) } catch { [pscustomobject]@{error='CDP_CLIENT_INSPECTION_UNAVAILABLE';hresult=$_.Exception.HResult;category=$_.CategoryInfo.Category.ToString()} | ConvertTo-Json -Compress; exit 2 }
+[pscustomobject]@{phase='PROCESS'} | ConvertTo-Json -Compress
+try { $filter="Name = 'powershell.exe' OR Name = 'pwsh.exe' OR Name = 'node.exe'"; foreach($client in $clients){$filter+=' OR ProcessId = '+[int]$client.pid}; $items=@(Get-CimInstance Win32_Process -Filter $filter -ErrorAction Stop | ForEach-Object { $created=$null; try { $created=$_.CreationDate.ToUniversalTime().ToString('o') } catch {}; [pscustomobject]@{pid=$_.ProcessId;parentPid=$_.ParentProcessId;name=$_.Name;sessionId=$_.SessionId;created=$created;commandLine=$_.CommandLine;executablePath=$_.ExecutablePath} }) } catch { [pscustomobject]@{error='PROCESS_INSPECTION_UNAVAILABLE';hresult=$_.Exception.HResult;category=$_.CategoryInfo.Category.ToString()} | ConvertTo-Json -Compress; exit 2 }
 $principal=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 [pscustomobject]@{elevated=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);processes=$items;connections=$clients;tcpInspectionComplete=$true} | ConvertTo-Json -Depth 5 -Compress`;
-  let stdout;
-  try{({stdout}=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',command],{windowsHide:true,timeout:10000,maxBuffer:4*1024*1024}));}
-  catch(error){let code='CONCURRENCY_INSPECTION_UNAVAILABLE';try{const returned=JSON.parse(error.stdout);if(['PROCESS_INSPECTION_UNAVAILABLE','CDP_CLIENT_INSPECTION_UNAVAILABLE'].includes(returned.error))code=returned.error;}catch{}throw concurrencyError(code,{processes:[],warnings:[],inspectionErrors:[code],limitation:VISIBILITY_LIMIT});}
-  let snapshot;try{snapshot=JSON.parse(stdout);}catch{throw concurrencyError('PROCESS_INSPECTION_RESPONSE_INVALID',{processes:[],inspectionErrors:['INVALID_JSON']});}
-  if(!Array.isArray(snapshot.processes)||!snapshot.processes.some(p=>p.pid===process.pid))throw concurrencyError('PROCESS_INSPECTION_RESPONSE_INVALID',{processes:[],inspectionErrors:['INSPECTING_PROCESS_MISSING']});
-  return snapshot;
+function inventoryLines(stdout){return String(stdout||'').trim().split(/\r?\n/).filter(Boolean).map(line=>{try{return JSON.parse(line);}catch{return null;}});}
+export async function inspectProcesses({execute=exec,platform=process.platform,selfPid=process.pid,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
+  if(platform!=='win32')throw new Error('LIVE_REQUIRES_WINDOWS');
+  const attempts=[];
+  for(let attempt=0;attempt<2;attempt++){
+    const started=now();let stdout;
+    try{({stdout}=await execute('powershell.exe',['-NoProfile','-NonInteractive','-Command',inventoryCommand],{windowsHide:true,timeout:10000,maxBuffer:4*1024*1024}));}
+    catch(error){
+      const lines=inventoryLines(error.stdout),phase=lines.findLast(v=>v?.phase)?.phase||'STARTUP';
+      const provider=lines.findLast(v=>v?.error),returned=provider?.error;
+      const code=['PROCESS_INSPECTION_UNAVAILABLE','CDP_CLIENT_INSPECTION_UNAVAILABLE'].includes(returned)?returned:'CONCURRENCY_INSPECTION_UNAVAILABLE';
+      // Only a killed timeout is retried. No failed inventory ever grants permission.
+      const timedOut=error.killed===true&&error.code!=='ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+      attempts.push({attempt:attempt+1,phase,durationMs:now()-started,failure:timedOut?'TIMEOUT':error.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER'?'OUTPUT_LIMIT':typeof error.code==='string'&&/^[A-Z0-9_]+$/.test(error.code)?error.code:'QUERY_FAILED',signal:typeof error.signal==='string'?error.signal:null,hresult:Number.isInteger(provider?.hresult)?provider.hresult:null,category:typeof provider?.category==='string'&&/^[A-Za-z]+$/.test(provider.category)?provider.category:null});
+      if(timedOut&&attempt===0){await sleep(200);continue;}
+      throw concurrencyError(code,{processes:[],warnings:[],inspectionErrors:[code],attempts,limitation:VISIBILITY_LIMIT});
+    }
+    const lines=inventoryLines(stdout),snapshot=lines.at(-1);
+    if(lines.some(v=>v===null)||!Array.isArray(snapshot?.processes)||!snapshot.processes.some(p=>p.pid===selfPid))throw concurrencyError('PROCESS_INSPECTION_RESPONSE_INVALID',{processes:[],inspectionErrors:['INVALID_JSON_OR_INSPECTING_PROCESS_MISSING'],attempts});
+    // Validate completeness before returning even when a previous timeout recovered.
+    classifyConcurrency(snapshot,{selfPid});
+    snapshot.inspection={durationMs:now()-started,attempts:attempt+1,recoveredFailures:attempts};
+    return snapshot;
+  }
 }
 export function classifyConcurrency(snapshot,{ignoreControllerPids=[],selfPid=process.pid}={}){
   if(typeof snapshot?.elevated!=='boolean'||!Array.isArray(snapshot.processes)||!Array.isArray(snapshot.connections)||snapshot.tcpInspectionComplete!==true)throw concurrencyError('CONCURRENCY_INSPECTION_UNAVAILABLE',{processes:[],warnings:[],inspectionErrors:['INCOMPLETE_PROCESS_OR_TCP_INVENTORY'],limitation:VISIBILITY_LIMIT});
@@ -59,7 +77,7 @@ export function classifyConcurrency(snapshot,{ignoreControllerPids=[],selfPid=pr
     const resolved=c.pid>0&&byPid.has(c.pid),p=byPid.get(c.pid)||{pid:c.pid};
     processes.push({...identity(p),reason:resolved?'FOREIGN_CDP_CLIENT':'CDP_CLIENT_OWNER_UNRESOLVED',state:c.state,inspectionErrors:[...identity(p).inspectionErrors,...(!resolved?['CDP_OWNER_NOT_IN_PROCESS_SNAPSHOT']:[])]});
   }
-  return {elevated:snapshot.elevated,processes,warnings,inspectionErrors:[],limitation:VISIBILITY_LIMIT};
+  return {elevated:snapshot.elevated,processes,warnings,inspectionErrors:[],inspection:snapshot.inspection,limitation:VISIBILITY_LIMIT};
 }
 export function assertNoConflicts(snapshot,options){
   const report=classifyConcurrency(snapshot,options);

@@ -1,6 +1,6 @@
 #requires -Version 5.1
 # Normal unattended launcher; all actions use the existing Node/SQLite worker.
-param([int]$CycleSeconds=0,[int]$MaxDeparturesPerPass=8,[int]$MaxMaintenancePerPass=2,[int]$CsvBatchSize=10,[int]$MaximumPassSeconds=600,[int]$MaxPasses=0,[switch]$Resume,[switch]$EnableGuardedMaintenance)
+param([int]$CycleSeconds=0,[int]$MaxDeparturesPerPass=16,[int]$MaxMaintenancePerPass=2,[int]$CsvBatchSize=10,[int]$MaximumPassSeconds=600,[int]$MaxPasses=0,[switch]$Resume,[switch]$EnableGuardedMaintenance)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'operator\Operator-Library.ps1')
 if($Resume){$null=Invoke-AM4Control 'automatic'}

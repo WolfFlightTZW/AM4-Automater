@@ -29,6 +29,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS actions_target_state ON actions(target,state);
       CREATE INDEX IF NOT EXISTS actions_state ON actions(state);
+      CREATE INDEX IF NOT EXISTS actions_aircraft_state ON actions(json_extract(data,'$.aircraftId'),state);
       PRAGMA busy_timeout=5000;`);
     this.db.prepare('INSERT OR IGNORE INTO metadata VALUES(?,?)').run('schema','2');
     if(requireExisting&&this.db.prepare("SELECT value FROM metadata WHERE key='migrationValidated'").get()?.value!=='true'){this.db.close();throw new Error('RECOVERY_MIGRATION_NOT_VALIDATED');}
@@ -44,7 +45,7 @@ export class Store {
   }
   actions() { return this.db.prepare('SELECT data FROM actions').all().map(r => JSON.parse(r.data)); }
   unresolved() { return this.db.prepare("SELECT data FROM actions WHERE state IN ('PENDING','UNKNOWN')").all().map(r=>JSON.parse(r.data)); }
-  holds(target, exceptId) { return this.db.prepare("SELECT data FROM actions WHERE target=? AND state IN ('PENDING','UNKNOWN') AND id<>?").all(target,exceptId||'').map(r=>JSON.parse(r.data)); }
+  holds(target, exceptId, aircraftId=null) { const byName=this.db.prepare("SELECT data FROM actions WHERE target=? AND state IN ('PENDING','UNKNOWN') AND id<>?").all(target,exceptId||''); const byId=aircraftId?this.db.prepare("SELECT data FROM actions WHERE json_extract(data,'$.aircraftId')=? AND state IN ('PENDING','UNKNOWN') AND id<>?").all(aircraftId,exceptId||''):[]; return [...new Map([...byName,...byId].map(r=>{const a=JSON.parse(r.data);return [a.id,a];})).values()]; }
   get(id) { const row = this.db.prepare('SELECT data FROM actions WHERE id=?').get(id); if (!row) throw new Error('CHECKPOINT_NOT_FOUND'); return JSON.parse(row.data); }
   saveAction(action) {
     const legal = {
@@ -59,7 +60,7 @@ export class Store {
     const previous = this.db.prepare('SELECT data FROM actions WHERE id=?').get(action.id);
     if (previous) {
       const old = JSON.parse(previous.data);
-      if (!legal[old.state]?.includes(action.state) || old.registration !== action.registration || old.kind !== action.kind) throw new Error('ILLEGAL_ACTION_TRANSITION');
+      if (!legal[old.state]?.includes(action.state) || old.registration !== action.registration || old.kind !== action.kind || old.aircraftId !== action.aircraftId) throw new Error('ILLEGAL_ACTION_TRANSITION');
     } else if (action.state !== 'PENDING') throw new Error('ACTION_MUST_START_PENDING');
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -70,9 +71,9 @@ export class Store {
       this.db.exec('COMMIT');
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
-  intent({ registration, kind, aircraftId, before, quote }) {
-    if (this.holds(registration).length) throw new Error('UNRESOLVED_HARNESS_ACTION');
-    const action = { id: randomUUID(), registration, kind, aircraftId, before, quote, state: 'PENDING', scheduleSeen: false, created: new Date().toISOString() };
+  intent({ registration, kind, aircraftId, before, quote,completionObservation=false }) {
+    if (this.holds(registration,null,aircraftId).length) throw new Error('UNRESOLVED_HARNESS_ACTION');
+    const action = { id: randomUUID(), registration, kind, aircraftId, before, quote,completionObservation, state: 'PENDING', scheduleSeen: false, created: new Date().toISOString() };
     this.saveAction(action); return action;
   }
   saveCase(report) {
@@ -88,15 +89,15 @@ export class Store {
   close() { if (!this.closed) { this.db.close(); this.closed = true; } }
 }
 export function actionSummary(a) {
-  const out=Object.fromEntries(['id','registration','kind','aircraftId','state','created','scheduleSeen','lastObservation','reconciliation'].filter(k=>a[k]!==undefined).map(k=>[k,a[k]]));
+  const out=Object.fromEntries(['id','registration','kind','aircraftId','state','created','scheduleSeen','lastObservation','reconciliation','completionObservation'].filter(k=>a[k]!==undefined).map(k=>[k,a[k]]));
   if(a.quote)out.quote=Object.fromEntries(['requested','cost','maximumDebit','time'].filter(k=>a.quote[k]!==undefined).map(k=>[k,a.quote[k]]));
   return sanitize(out);
 }
 export function compactAction(a) {
   const out=actionSummary(a);
-  if(['PENDING','UNKNOWN','SCHEDULED_VERIFIED'].includes(a.state)) {
+  if(['PENDING','UNKNOWN'].includes(a.state)||(a.state==='SCHEDULED_VERIFIED'&&a.completionObservation===true)) {
     if(a.kind==='purchase')out.before={[a.registration]:a.before?.[a.registration]};
-    else if(['repair','check'].includes(a.kind))out.before={maintenance:{records:(a.before?.maintenance?.records||[]).filter(r=>r.registration===a.registration&&(!a.aircraftId||r.id===a.aircraftId))}};
+    else if(['repair','check'].includes(a.kind))out.before={maintenance:{records:(a.before?.maintenance?.records||[]).filter(r=>a.aircraftId?r.id===a.aircraftId:r.registration===a.registration)}};
     // Only the target's pre-action values are needed to resolve a possibly committed submission.
   }
   return out;

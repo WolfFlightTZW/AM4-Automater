@@ -14,9 +14,11 @@ import { OperatorSession } from '../operator/control.mjs';
 import { purchaseDecision,reconcilePurchase } from './purchasing.mjs';
 import { settings } from './settings.mjs';
 import { waitBetweenPasses } from './cadence.mjs';
+import {PassPerformance,requiresRecoveryBackoff,defaultMaxDepartures} from './performance.mjs';
+import {identityRows} from './identity.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url))),args=process.argv.slice(2),config={};
 for(let i=0;i<args.length;i+=2){if(!/^--[a-z-]+$/.test(args[i])||args[i+1]===undefined)throw new Error('INVALID_PRODUCTION_ARGUMENT');config[args[i].slice(2)]=Number(args[i+1]);}
-const cycle=config['cycle-seconds']??settings.cycleSeconds,maxDepartures=config['max-departures']??8,maxMaintenance=config['max-maintenance']??2,csvBatch=config['csv-batch']??10,maxPasses=config['max-passes']??0,passSeconds=config['pass-seconds']??600;
+const cycle=config['cycle-seconds']??settings.cycleSeconds,maxDepartures=config['max-departures']??defaultMaxDepartures,maxMaintenance=config['max-maintenance']??2,csvBatch=config['csv-batch']??10,maxPasses=config['max-passes']??0,passSeconds=config['pass-seconds']??600;
 if(Object.values(config).some(v=>!Number.isInteger(v))||cycle<1||cycle>3600||maxDepartures<0||maxDepartures>30||maxMaintenance<0||maxMaintenance>10||csvBatch<1||csvBatch>30||maxPasses<0||passSeconds<60||passSeconds>900)throw new Error('INVALID_PRODUCTION_BOUNDS');
 if(config['parent-pid']!==process.ppid)throw new Error('START_AM4_LAUNCHER_REQUIRED');
 mkdirSync(join(root,'reports'),{recursive:true});
@@ -31,7 +33,8 @@ function stage(name){active();runner.deadline=Date.now()+120000;report.phase=nam
 async function action(scenario,registration){
   active();runner.deadline=Date.now()+120000;runner.budget=1;runner.options.registration=registration;runner.options.waitSeconds=0;
   report.activeAction={scenario,registration};save(report);
-  const r=await runner.execute(scenario);
+  const r=await runner.measure(scenario==='Departure'?'departureAction':/^Purchase/.test(scenario)?'purchaseAction':'maintenanceAction',()=>runner.execute(scenario));
+  report.performance=runner.performance.report();
   report.actions.push({scenario,registration,id:r.id,checkpoint:r.checkpoint,result:r.result,reason:r.reason,submitted:r.actionAttempted?.submitted});
   if(r.checkpoint){const a=store.get(r.checkpoint);report.actions.at(-1).state=a.state;}
   report.activeAction=null;save(report);active();
@@ -85,7 +88,7 @@ try{
     store.event('PRODUCTION_POLICY_AUTHORIZED',{kind,target,cost,cashReserve:100000000});runner.budget--;return true;
   };
   while(!maxPasses||completedPasses<maxPasses){
-    active();const passDeadline=Date.now()+passSeconds*1000;
+    active();const passDeadline=Date.now()+passSeconds*1000;runner.performance=new PassPerformance();
     report={passId:randomUUID(),started:new Date().toISOString(),status:'RUNNING',phase:'STARTING',mode:'AUTOMATIC',actions:[],maintenance:[],held:[],verifiedDepartures:[],purchases:[],maintenanceActions:[]};save(report);
     console.log(JSON.stringify({event:'PASS_STARTED',passId:report.passId,pass:completedPasses+1}));
     stage('MARKETS');
@@ -96,7 +99,7 @@ try{
         const o=reconcileRecovery(a,snapshot);a.scheduleSeen ||= o.scheduleSeen;a.state=o.state;a.lastObservation=o;store.saveAction(a);
         report.maintenance.push({registration:a.registration,kind:a.kind,state:a.state,reason:o.reason});
       }else if(a.kind==='departure'){
-        const rows=snapshot.fleet.filter(f=>f.registration===a.registration);
+        const rows=a.aircraftId?identityRows(snapshot,a.registration,a.aircraftId).fleet:snapshot.fleet.filter(f=>f.registration===a.registration);
         if(rows.length===1&&rows[0].location==='inflightList'){a.state='DEPARTED_VERIFIED';store.saveAction(a);}
       }
       // Unknown purchase outcomes retain only that resource's durable hold.
@@ -111,24 +114,31 @@ try{
     }
     report.aCheck=report.maintenanceActions.some(a=>a.kind==='check')?'ATTEMPTED_ELIGIBLE':planned.some(a=>a.kind==='check')?'DEFERRED_PASS_BUDGET':'SKIPPED_NO_ELIGIBLE_AIRCRAFT';
     stage('DISPATCH');snapshot=await runner.snapshot({markets:true});
-    for(const a of snapshot.fleet.filter(a=>['landedList','parkedList'].includes(a.location))){
+    const dispatchObservation={value:snapshot,sequence:runner.sequence,finished:Date.now()};
+    const candidates=snapshot.fleet.filter(a=>['landedList','parkedList'].includes(a.location));
+    for(const a of candidates){
       if(report.verifiedDepartures.length>=maxDepartures||Date.now()>passDeadline-15000)break;
+      runner.performance.counts.examined++;
       const e=departureEligibility(snapshot,a.registration,runner.holds(a.registration),null);
-      if(e.reasons.some(reason=>reason!=='FLIGHT_DURATION_UNKNOWN')){report.held.push({registration:a.registration,reasons:e.reasons});continue;}
+      if(e.reasons.some(reason=>reason!=='FLIGHT_DURATION_UNKNOWN')){runner.performance.counts.skipped++;report.held.push({registration:a.registration,reasons:e.reasons});continue;}
+      runner.dispatchSnapshot=dispatchObservation;
+      runner.performance.counts.attempted++;
       const r=await action('Departure',a.registration);
-      if(r.result==='PASS')report.verifiedDepartures.push(a.registration);
-      else report.held.push({registration:a.registration,reason:r.reason,checkpoint:r.checkpoint});
+      if(r.gameResponse?.eligible?.eligible)runner.performance.counts.eligible++;
+      if(r.result==='PASS'){report.verifiedDepartures.push(a.registration);runner.performance.counts.dispatched++;}
+      else {runner.performance.counts.skipped++;report.held.push({registration:a.registration,reason:r.reason,reasons:r.gameResponse?.eligible?.reasons,checkpoint:r.checkpoint});}
       await purchaseMarkets('AFTER_DEPARTURE');
     }
+    runner.performance.counts.deferred=candidates.length-runner.performance.counts.examined;
     stage('FLEET_CSV');
-    try{report.fleetCsv=await highCycleReport(runner,{limit:csvBatch});}catch(error){active();report.fleetCsv={result:'INCONCLUSIVE',reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'REPORT_FAILED'};}
+    try{report.fleetCsv=await runner.measure('fleetReport',()=>highCycleReport(runner,{limit:csvBatch}));}catch(error){active();report.fleetCsv={result:'INCONCLUSIVE',reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'REPORT_FAILED'};}
     stage('ENDING_REFRESH');const endingFleet=await runner.fleet();report.endingFleet={count:endingFleet.length,byLocation:endingFleet.reduce((out,a)=>(out[a.location]=(out[a.location]||0)+1,out),{})};await purchaseMarkets('PASS_END');report.endingMarkets=report.markets;
-    report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);report.resourceCache={...runner.resources.metrics};report.status='COMPLETED_OPERATIONS_PASS';report.phase='WAITING';save(report);
+    report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);report.resourceCache={...runner.resources.metrics};report.performance=runner.performance.report();report.status='COMPLETED_OPERATIONS_PASS';report.phase='WAITING';save(report);
     if(settings.retainPassHistory)appendFileSync(join(root,'reports','operations-history.jsonl'),JSON.stringify(report)+'\n');store.event('PRODUCTION_PASS_COMPLETED',{passId:report.passId,departures:report.verifiedDepartures,maintenance:report.maintenanceActions,purchases:report.purchases});
     completedPasses++;console.log(JSON.stringify({event:'PASS_COMPLETED',pass:completedPasses,departures:report.verifiedDepartures,maintenance:report.maintenanceActions,aCheck:report.aCheck}));
     if(maxPasses&&completedPasses>=maxPasses)break;
     // Serialized passes: an unresolved transaction backs off rather than tight-looping.
-    const waitingForRecovery=store.unresolved().length>0;
+    const waitingForRecovery=requiresRecoveryBackoff(store.unresolved(),{scheduleComplete:snapshot.schedule?.complete===true,maintenanceComplete:snapshot.maintenance?.ok===true})||runner.holds('fuel').length>0||runner.holds('co2').length>0;
     if(waitingForRecovery)runner.resources.invalidate();
     Object.assign(report,await waitBetweenPasses({active,recovery:waitingForRecovery,seconds:cycle}));save(report);
     store.event('PASS_TIMING',{passId:report.passId,durationMs:report.durationMs,idleMs:report.idleMs,idleReason:report.idleReason});
@@ -138,7 +148,7 @@ try{
   if(!runner.operator&&reason==='INTERFACE_ALREADY_OWNED_OR_UNCERTAIN'){
     console.log(JSON.stringify({event:'START_IGNORED',reason:'CONTROLLER_ALREADY_RUNNING_OR_INTERFACE_RESERVED'}));
   }else{
-  report ||= {started:new Date().toISOString(),actions:[]};report.status=reason.startsWith('OPERATOR_')?'STOPPED_OPERATOR_PAUSED':'STOPPED_SAFELY';report.reason=reason;if(error.processDiagnostics)report.processDiagnostics=error.processDiagnostics;report.finished=new Date().toISOString();save(report);
+  report ||= {started:new Date().toISOString(),actions:[]};report.status=reason.startsWith('OPERATOR_')?'STOPPED_OPERATOR_PAUSED':'STOPPED_SAFELY';report.reason=reason;if(runner.performance)report.performance=runner.performance.report();if(error.processDiagnostics)report.processDiagnostics=error.processDiagnostics;report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);save(report);
   console.log(JSON.stringify({event:'CONTROLLER_STOPPED',reason}));if(!reason.startsWith('OPERATOR_'))process.exitCode=2;
   }
 }finally{

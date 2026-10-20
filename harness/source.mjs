@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import {validRegistration,validAircraftId} from './identity.mjs';
 export function extractBlock(source, name) {
   const safe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = source.match(new RegExp('\\$' + safe + '=(@[\'\"])\\r?\\n([\\s\\S]*?)\\r?\\n[\'\"]@'));
@@ -12,9 +13,18 @@ export function readSource(root) {
   const blocks = Object.fromEntries(['marketJs', 'fleetJs', 'maintJs', 'purchaseJsTemplate', 'selectJs', 'departJs', 'plannerJs'].map(name => [name, extractBlock(source, name)]));
   return { hash: createHash('sha256').update(source).digest('hex'), blocks, source };
 }
-export function renderBlock(block, registration, kind) {
-  if (registration && !/^[A-Z0-9]+(?:-[A-Z0-9]+)+$/.test(registration)) throw new Error('INVALID_REGISTRATION');
-  return block.replaceAll('$regJson', JSON.stringify(registration)).replaceAll('$kindJson', JSON.stringify(kind));
+export function renderBlock(block, registration, kind, aircraftId) {
+  if (registration && !validRegistration(registration)) throw new Error('INVALID_REGISTRATION');
+  const rendered=block.replaceAll('$regJson', JSON.stringify(registration)).replaceAll('$kindJson', JSON.stringify(kind));
+  if(aircraftId===undefined)return rendered; // Offline/legacy reference callers only.
+  if(!validAircraftId(aircraftId))throw new Error('AIRCRAFT_ID_REQUIRED');
+  const committing=block.includes('buttons[0].click()');
+  return `(()=>{const id=${JSON.stringify(aircraftId)},reg=${JSON.stringify(registration)};
+    const rows=[...document.querySelectorAll('.flight-list[data-reg]')].filter(r=>r.id==='flightStatus'+id);
+    if(rows.length!==1||rows[0].dataset.reg!==reg||reg==='N-145')return JSON.stringify({ok:false,reason:'AIRCRAFT_ID_OR_NAME_CHANGED'});
+    if(${committing}&&[...document.querySelectorAll('button')].filter(b=>b.id==='flightInfoDepart'+id&&b.getClientRects().length&&!b.disabled&&b.getAttribute('aria-disabled')!=='true').length!==1)return JSON.stringify({ok:false,reason:'FLIGHT_PANEL_ID_CHANGED'});
+    return ${rendered};})()`;
+
 }
 // Declarative capabilities only. Never embed airline observations or use this metadata for eligibility.
 export function inventory(source) {

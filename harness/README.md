@@ -12,7 +12,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\harness\Run-AM4Tests.ps1
 
 # All maintained regression suites, including recovery, reporting and operator controls.
 $env:AM4_SOURCE_ROOT = 'H:\AM4 automate'
-node --test harness/tests/offline.test.mjs harness/tests/purchasing.test.mjs harness/tests/fleet-report.test.mjs harness/tests/recovery.test.mjs harness/tests/layout.test.mjs harness/tests/privacy.test.mjs operator/control.test.mjs operator/process-diagnostics.test.mjs
+node --test harness/tests/offline.test.mjs harness/tests/purchasing.test.mjs harness/tests/fleet-report.test.mjs harness/tests/recovery.test.mjs harness/tests/layout.test.mjs harness/tests/privacy.test.mjs harness/tests/production.test.mjs operator/control.test.mjs operator/process-diagnostics.test.mjs
 ```
 
 `-Scenario SelfTest` omits the named production-contract checks. `-Scenario Inventory` lists source adapter inventory. Offline fixtures are synthetic/saved data, not current AM4. Test output databases are isolated; do not point offline output at the active recovery directory.
@@ -28,11 +28,11 @@ Pause production and wait for SAFE TO USE GAME. Explicitly select ENTER TESTING 
 & .\harness\Run-AM4Tests.ps1 -Scenario InspectEligibility
 ```
 
-The named mutex and operator ownership exclude production. Legacy scripts/browser bots must also be stopped. Unreadable processes require the harness's existing admission confirmation; a known AM4 controller blocks connection. Return to PAUSE / MANUAL and wait for release when finished.
+The named mutex and operator ownership exclude production. Legacy scripts/browser bots must also be stopped. Unreadable unrelated shells produce visibility warnings; identifiable AM4 controllers, foreign CDP clients and incomplete process/TCP inspection block connection. Return to PAUSE / MANUAL and wait for release when finished.
 
 ## Explicit action scenarios
 
-Repair, ACheck, RepairChain and ACheckChain default to planner inspection. `-Live -Registration <eligible-registration>` enables the individual action only after the harness's exact confirmation phrase. They do not run bulk work. ResumeChain takes `-Checkpoint <UUID>` and only observes recovery; it never resubmits. Completion waiting is bounded and can be resumed later.
+Repair, ACheck, RepairChain and ACheckChain default to planner inspection. `-Live -Registration <eligible-registration>` enables the individual action only after the harness's exact confirmation phrase. They do not run bulk work. ResumeChain takes an explicit chain checkpoint via `-Checkpoint <UUID>` and only observes recovery; it never resubmits. Normal production submissions do not retain a maintenance-completion checkpoint. Completion waiting is bounded and can be resumed later.
 
 Departure, PurchaseFuel and PurchaseCO2 live regressions require `-Reason` and explicit confirmation. Do not repeat proven irreversible operations merely to demonstrate them. Production uses the existing operating authorization and its policy guards, rather than interactive harness prompts.
 

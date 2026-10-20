@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { Store } from './store.mjs';
 import { readSource, inventory } from './source.mjs';
 import { Runner } from './runner.mjs';
+import {validRegistration} from './identity.mjs';
 
 export const scenarios = ['Offline', 'SelfTest', 'Inventory', 'InspectMarkets', 'InspectAircraft', 'InspectSchedule', 'InspectEligibility', 'Repair', 'ACheck', 'RepairChain', 'ACheckChain', 'ResumeChain', 'Departure', 'PurchaseFuel', 'PurchaseCO2', 'IntegratedPass'];
 export function parseArgs(args) {
@@ -18,7 +19,7 @@ export function parseArgs(args) {
   for (const key of ['maxSeconds', 'waitSeconds', 'maxActions']) { result[key] = Number(result[key]); if (!Number.isInteger(result[key])) throw new Error('INTEGER_LIMIT_REQUIRED'); }
   if (result.maxSeconds < 10 || result.maxSeconds > 300 || result.waitSeconds < 0 || result.waitSeconds > 120 || result.maxActions < 1 || result.maxActions > 3) throw new Error('BOUNDS_INVALID');
   if (!scenarios.includes(result.scenario)) throw new Error('UNKNOWN_SCENARIO');
-  if (result.registration && !/^[A-Z0-9]+(?:-[A-Z0-9]+)+$/.test(result.registration)) throw new Error('INVALID_REGISTRATION');
+  if (result.registration && !validRegistration(result.registration)) throw new Error('INVALID_REGISTRATION');
   if (result.checkpoint && !/^[a-f0-9-]{36}$/.test(result.checkpoint)) throw new Error('INVALID_CHECKPOINT');
   if (typeof result.steps === 'string') result.steps = result.steps.split(',');
   if (!result.steps.length || result.steps.length > 6 || result.steps.some(s => !scenarios.includes(s) || ['Offline', 'SelfTest', 'Inventory', 'IntegratedPass', 'ResumeChain', 'PurchaseFuel', 'PurchaseCO2', 'Departure'].includes(s))) throw new Error('INVALID_INTEGRATED_STEPS');
