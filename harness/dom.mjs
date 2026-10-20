@@ -107,6 +107,21 @@ export function createDom(doc = document) {
     }
     return { ok: true };
   }
+  async function showFleet(){
+    const tabs=()=>[...doc.querySelectorAll('button[onclick]')].filter(e=>enabled(e)&&/^Fleet(?:\s|\()/i.test(clean(e.innerText))&&/Ajax\(['"]fleet\.php['"],\s*['"]routesContainer['"]/.test(e.getAttribute('onclick')||''));
+    const covered=()=>{const popup=doc.querySelector('#popup.show');return visible(popup)&&!popup.contains(doc.querySelector('#routesContainer'));};
+    const ready=()=>{const root=doc.querySelector('#routesContainer'),t=tabs();return visible(root)&&t.length===1&&/\bbtn-primary\b/.test(t[0].className||'')&&/Number of aircraft:/i.test(clean(root.innerText))&&!covered();};
+    if(ready())return {ok:true,screen:'FLEET'};
+    if(!tabs().length||covered()){
+      const menu=[...doc.querySelectorAll('#mapRoutes[onclick]')].filter(e=>enabled(e)&&/menuFleet\(['"]Routes['"]\)/.test(e.getAttribute('onclick')||''));
+      if(menu.length!==1)return {ok:false,reason:'FLEET_MENU_UNAVAILABLE_OR_AMBIGUOUS'};
+      menu[0].click();await waitFor(()=>tabs().length>0);
+    }
+    if(ready())return {ok:true,screen:'FLEET'};
+    const t=tabs();if(t.length!==1)return {ok:false,reason:'FLEET_TAB_UNAVAILABLE_OR_AMBIGUOUS'};
+    t[0].click();await waitFor(ready);
+    return {ok:true,screen:'FLEET'};
+  }
   function rootContent(){return doc.querySelector('#maintAction')?.innerHTML;}
   function inspectPlanner(registration, kind, id) {
     const section = doc.querySelector(kind === 'repair' ? '#typeRepair' : '#typeCheck');
@@ -160,10 +175,10 @@ export function createDom(doc = document) {
     const regs=rows.length===1?[String(rows[0].dataset.reg||'')]:[];
     return { aircraftId, hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
   }
-  return { maintenance, schedule, controls, browserAutomation, navigate, openPlanner, inspectPlanner, commit, response, flight, number, handler, registrations };
+  return { maintenance, schedule, controls, browserAutomation, navigate, showFleet, openPlanner, inspectPlanner, commit, response, flight, number, handler, registrations };
 }
 export function domExpression(method, args = []) {
-  if (!['maintenance', 'schedule', 'controls', 'browserAutomation', 'navigate', 'openPlanner', 'inspectPlanner', 'commit', 'response', 'flight'].includes(method)) throw new Error('DOM_METHOD_NOT_ALLOWED');
+  if (!['maintenance', 'schedule', 'controls', 'browserAutomation', 'navigate', 'showFleet', 'openPlanner', 'inspectPlanner', 'commit', 'response', 'flight'].includes(method)) throw new Error('DOM_METHOD_NOT_ALLOWED');
   return `(async()=>JSON.stringify(await (${createDom.toString()})(document)[${JSON.stringify(method)}](...${JSON.stringify(args)})))()`;
 }
 

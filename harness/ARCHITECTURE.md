@@ -20,6 +20,7 @@ Node.js 24+ supplies WebSocket, SQLite and node:test. No npm dependencies or add
 | `resource-cache.mjs` | Short-lived observed values only; invalidation, no predicted balance ledger |
 | `settings.mjs`, `production-settings.json` | Validated central cadence/cache/backoff settings |
 | `cadence.mjs` | Awaited inter-pass wait with frequent ownership checks and recovery backoff |
+| `fleet-heartbeat.mjs` | Session-only verified-departure counter and interruptible Fleet display between actions |
 | `fleet-report.mjs` | Incremental informational CSV and coverage sidecar |
 | `main.mjs`, `Run-AM4Tests.ps1` | Offline/read-only defaults; named TESTING scenarios |
 | `../operator/` | Existing mode/ownership database, command leases, UI and PowerShell bridge |

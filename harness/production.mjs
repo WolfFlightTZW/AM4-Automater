@@ -16,6 +16,7 @@ import { settings } from './settings.mjs';
 import { waitBetweenPasses } from './cadence.mjs';
 import {PassPerformance,requiresRecoveryBackoff,defaultMaxDepartures} from './performance.mjs';
 import {identityRows} from './identity.mjs';
+import {FleetHeartbeat} from './fleet-heartbeat.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url))),args=process.argv.slice(2),config={};
 for(let i=0;i<args.length;i+=2){if(!/^--[a-z-]+$/.test(args[i])||args[i+1]===undefined)throw new Error('INVALID_PRODUCTION_ARGUMENT');config[args[i].slice(2)]=Number(args[i+1]);}
 const cycle=config['cycle-seconds']??settings.cycleSeconds,maxDepartures=config['max-departures']??defaultMaxDepartures,maxMaintenance=config['max-maintenance']??2,csvBatch=config['csv-batch']??10,maxPasses=config['max-passes']??0,passSeconds=config['pass-seconds']??600;
@@ -27,6 +28,7 @@ const save=value=>{writeFileSync(reportPath+'.tmp',JSON.stringify(value,null,2))
 const store=new Store(join(root,'reports','production-actions'),{ledgerRoot:join(root,'harness','state'),requireExisting:true,diagnosticReason:settings.diagnosticReason});
 const runner=new Runner({scenario:'Production',live:true,maxSeconds:passSeconds,maxActions:1,waitSeconds:0,productionRoot:root},readSource(root),store);
 let report,completedPasses=0;
+const fleetHeartbeat=new FleetHeartbeat();
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function active(){runner.operator.assertCanCommit();if(runner.cdp.socket.readyState!==WebSocket.OPEN)throw new Error('CDP_DISCONNECTED');}
 function stage(name){active();runner.deadline=Date.now()+120000;report.phase=name;save(report);}
@@ -89,7 +91,7 @@ try{
   };
   while(!maxPasses||completedPasses<maxPasses){
     active();const passDeadline=Date.now()+passSeconds*1000;runner.performance=new PassPerformance();
-    report={passId:randomUUID(),started:new Date().toISOString(),status:'RUNNING',phase:'STARTING',mode:'AUTOMATIC',actions:[],maintenance:[],held:[],verifiedDepartures:[],purchases:[],maintenanceActions:[]};save(report);
+    report={passId:randomUUID(),started:new Date().toISOString(),status:'RUNNING',phase:'STARTING',mode:'AUTOMATIC',fleetHeartbeat:{verifiedSinceDisplay:fleetHeartbeat.verifiedSinceDisplay},actions:[],maintenance:[],held:[],verifiedDepartures:[],purchases:[],maintenanceActions:[]};save(report);
     console.log(JSON.stringify({event:'PASS_STARTED',passId:report.passId,pass:completedPasses+1}));
     stage('MARKETS');
     await purchaseMarkets('PASS_START');
@@ -127,6 +129,12 @@ try{
       if(r.gameResponse?.eligible?.eligible)runner.performance.counts.eligible++;
       if(r.result==='PASS'){report.verifiedDepartures.push(a.registration);runner.performance.counts.dispatched++;}
       else {runner.performance.counts.skipped++;report.held.push({registration:a.registration,reason:r.reason,reasons:r.gameResponse?.eligible?.reasons,checkpoint:r.checkpoint});}
+      const heartbeat=await fleetHeartbeat.afterDeparture(report.actions.at(-1),{
+        active,display:()=>runner.measure('fleetHeartbeat',()=>runner.dom('showFleet')),
+        begin:()=>runner.operator.begin('Fleet visual heartbeat'),end:()=>runner.operator.end('RETURNED')
+      });
+      report.fleetHeartbeat={verifiedSinceDisplay:fleetHeartbeat.verifiedSinceDisplay,...(heartbeat?{lastDisplay:{at:new Date().toISOString(),...heartbeat}}:report.fleetHeartbeat?.lastDisplay?{lastDisplay:report.fleetHeartbeat.lastDisplay}:{})};
+      if(heartbeat){console.log(JSON.stringify({event:'FLEET_HEARTBEAT',...heartbeat}));save(report);}
       await purchaseMarkets('AFTER_DEPARTURE');
     }
     runner.performance.counts.deferred=candidates.length-runner.performance.counts.examined;
