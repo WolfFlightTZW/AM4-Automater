@@ -11,6 +11,9 @@ export class ResourceCache {
     if(Number.isSafeInteger(header.cash))for(const k of ['fuel','co2'])this.value[k].cash=header.cash;
     return true;
   }
+  debitReady(before,after){
+    const v=this.value,r=after?.receipt;return Boolean(v&&before&&after&&Number.isSafeInteger(before.epoch)&&before.epoch===after.epoch&&after.versions?.fuel>before.versions?.fuel&&after.versions?.co2>before.versions?.co2&&r?.routes===1&&[r.fuel,r.co2].every(n=>Number.isSafeInteger(n)&&n>=0)&&r.fuel<=v.fuel.holding&&r.co2<=v.co2.holding&&before.header?.fuel===v.fuel.holding&&after.header?.fuel===v.fuel.holding-r.fuel&&Number.isFinite(after.header?.co2Percent)&&Math.abs(after.header.co2Percent-(v.co2.holding-r.co2)/v.co2.capacityMax*100)<=0.00011);
+  }
   debit(before,after){
     const v=this.value,r=after?.receipt;
     const valid=v&&before&&after&&Number.isSafeInteger(before.epoch)&&before.epoch===after.epoch&&after.versions?.fuel>before.versions?.fuel&&after.versions?.co2>before.versions?.co2&&r?.routes===1&&[r.fuel,r.co2].every(n=>Number.isSafeInteger(n)&&n>=0)&&r.fuel<=v.fuel.holding&&r.co2<=v.co2.holding&&before.header?.fuel===v.fuel.holding&&after.header?.fuel===v.fuel.holding-r.fuel;

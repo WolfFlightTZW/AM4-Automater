@@ -43,7 +43,7 @@ export class Runner {
     this.sequence++;
     return value;
   }
-  dom(method,args=[]){const read=()=>this.evaluate(domExpression(method,args),'DOM.'+method);return method==='openPlanner'?this.measure('navigation',read):read();}
+  dom(method,args=[]){const read=()=>this.evaluate(domExpression(method,args),'DOM.'+method);const category={openPlanner:'navigation',flight:'flightInspection',receipt:'receiptInspection',departureObservation:'targetInspection',inventory:'headerInspection'}[method];return category?this.measure(category,read):read();}
   async nav(view) { const result = await this.measure('navigation',()=>this.dom('navigate',[view])); if (!result.ok) throw new Error(result.reason); }
   measure(name,operation){if(!this.performance)return operation();return name==='navigation'&&this.actionInProgress?this.performance.measure('actionNavigation',()=>this.performance.measure(name,operation)):this.performance.measure(name,operation);}
   async markets({fresh=false}={}) {
@@ -246,7 +246,9 @@ export class Runner {
         if(observed.rows.length===1&&observed.rows[0].location==='inflightList'){
           action.state='DEPARTED_VERIFIED';this.store.saveAction(action);report.result='PASS';report.reason='EXISTING_DEPARTURE_ACTION_VERIFIED';
           Object.assign(this.batchSnapshot.fleet.find(a=>a.aircraftId===aircraftId),observed.rows[0]);
-          report.gameResponse.inventoryAccounted=this.resources.debit(beforeReceipt,observed);break;
+          let proof=observed;
+          for(let followup=0;followup<3&&!this.resources.debitReady(beforeReceipt,proof);followup++){await this.pause(150);proof=await this.dom('receipt');}
+          report.gameResponse.inventoryAccounted=this.resources.debit(beforeReceipt,proof);break;
         }
       }else{
         const fleet=await this.fleet();report.endingState={fleet};const rows=fleet.filter(r=>r.aircraftId===aircraftId);
