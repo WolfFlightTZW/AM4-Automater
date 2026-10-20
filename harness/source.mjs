@@ -22,7 +22,12 @@ export function renderBlock(block, registration, kind, aircraftId) {
   return `(()=>{const id=${JSON.stringify(aircraftId)},reg=${JSON.stringify(registration)};
     const rows=[...document.querySelectorAll('.flight-list[data-reg]')].filter(r=>r.id==='flightStatus'+id);
     if(rows.length!==1||rows[0].dataset.reg!==reg||reg==='N-145')return JSON.stringify({ok:false,reason:'AIRCRAFT_ID_OR_NAME_CHANGED'});
-    if(${committing}&&[...document.querySelectorAll('button')].filter(b=>b.id==='flightInfoDepart'+id&&b.getClientRects().length&&!b.disabled&&b.getAttribute('aria-disabled')!=='true').length!==1)return JSON.stringify({ok:false,reason:'FLIGHT_PANEL_ID_CHANGED'});
+    if(${committing}){
+      const details=[...document.querySelectorAll('#flightInfo button,#flightInfo a')].filter(e=>e.getClientRects().length&&(e.innerText||'').trim()==='Details').map(e=>(e.getAttribute('onclick')||'').match(/routes_main\\.php\\?mode=details&id=([0-9]+)/)?.[1]).filter(Boolean);
+      const depart=[...document.querySelectorAll('#flightInfo button,#flightInfo a')].filter(b=>/^flightInfoDepart[0-9]+$/.test(b.id)&&b.getClientRects().length&&!b.disabled&&b.getAttribute('aria-disabled')!=='true'&&(b.innerText||'').trim()==='Depart');
+      if(details.length!==1||details[0]!==id||depart.length!==1)return JSON.stringify({ok:false,reason:'FLIGHT_PANEL_ID_CHANGED'});
+    }
+
     return ${rendered};})()`;
 
 }

@@ -70,14 +70,16 @@ test('non-prefixed schedule calendar labels use the current aircraft ID',()=>{
  const result=createDom(doc).schedule();assert.equal(result.complete,true);assert.equal(result.entries[0].registration,'RetireSoon');assert.equal(result.entries[0].aircraftId,'123');
  const s=snapshot();s.schedule=result;assert.equal(departureEligibility(s,'N-TEST001',[],1).eligible,false);
 });
-test('flight panel uses enabled Depart ID; renamed row remains identity bound',()=>{
- const row=new Element({id:'flightStatus123',data:{reg:'RetireSoon'}}),button=new Element({id:'flightInfoDepart123',text:'Depart'}),panel=new Element({text:'RetireSoon Flight time 02:30:00'}),doc=new Element({queries:{'#flightInfo':[panel],'button':[button],'.flight-list[data-reg]':[row]}});
- let f=createDom(doc).flight();assert.equal(f.aircraftId,'123');assert.deepEqual(f.registrations,['RetireSoon']);assert.equal(f.hours,2.5);button.disabled=true;assert.equal(createDom(doc).flight().aircraftId,null);
-});
-test('ID-bound proven departure refuses wrong, ambiguous or disabled Depart controls',()=>{
- const row=new Element({id:'flightStatus123',data:{reg:'RetireSoon',grounded:'0'},queries:{'[id^="flightStatusWear"]':[new Element({text:'0.00'})],'[id^="flightStatusCounter"]':[new Element({text:'landed'})]}}),button=new Element({id:'flightInfoDepart123',text:'Depart'}),doc=new Element({queries:{'.flight-list[data-reg]':[row],'#landedList .flight-list[data-reg],#parkedList .flight-list[data-reg]':[row],'button':[button]}});doc.body={innerText:'RetireSoon 0.00% worn'};
- const run=id=>JSON.parse(vm.runInNewContext(renderBlock(source.blocks.departJs,'RetireSoon',null,id),{document:doc}));assert.equal(run('999').ok,false);button.disabled=true;assert.equal(run('123').ok,false);button.disabled=false;assert.equal(run('123').ok,true);assert.equal(button.clicks,1);
-});
+function departurePage(){
+ const row=new Element({id:'flightStatus123',data:{reg:'RetireSoon',grounded:'0'},queries:{'[id^="flightStatusWear"]':[new Element({text:'0.00'})],'[id^="flightStatusCounter"]':[new Element({text:'landed'})]}});
+ const button=new Element({id:'flightInfoDepart999',text:'Depart'}),details=new Element({text:'Details',attrs:{onclick:"popup('routes_main.php?mode=details&id=123','Details');"}}),panel=new Element({text:'RetireSoon Flight time 02:30:00'});
+ const doc=new Element({queries:{'#flightInfo':[panel],'#flightInfo button,#flightInfo a':[details,button],'.flight-list[data-reg]':[row],'#landedList .flight-list[data-reg],#parkedList .flight-list[data-reg]':[row],'button':[button]}});doc.body={innerText:'RetireSoon 0.00% worn'};return {row,button,details,panel,doc};
+}
+test('flight panel separates aircraft ID from route ID and recognizes renamed aircraft duration',()=>{const p=departurePage(),f=createDom(p.doc).flight();assert.equal(f.aircraftId,'123');assert.equal(f.routeId,'999');assert.deepEqual(f.registrations,['RetireSoon']);assert.equal(f.hours,2.5);});
+test('disabled Depart control never grants flight identity or permission',()=>{const p=departurePage();p.button.disabled=true;assert.equal(createDom(p.doc).flight().aircraftId,null);assert.equal(JSON.parse(vm.runInNewContext(renderBlock(source.blocks.departJs,'RetireSoon',null,'123'),{document:p.doc})).ok,false);assert.equal(p.button.clicks,0);});
+test('ambiguous current aircraft selection fails without guessing identity',()=>{const p=departurePage();p.doc.queries['.flight-list[data-reg]'].push(p.row);assert.deepEqual(createDom(p.doc).flight().registrations,[]);assert.equal(JSON.parse(vm.runInNewContext(renderBlock(source.blocks.departJs,'RetireSoon',null,'123'),{document:p.doc})).ok,false);assert.equal(p.button.clicks,0);});
+test('departure binds Details aircraft ID even when route ID differs',()=>{const p=departurePage();assert.equal(JSON.parse(vm.runInNewContext(renderBlock(source.blocks.departJs,'RetireSoon',null,'123'),{document:p.doc})).ok,true);assert.equal(p.button.clicks,1);});
+test('a different Details target or a control outside selected panel cannot depart',()=>{for(const wrong of ['details','outside']){const p=departurePage();if(wrong==='details')p.details.attrs.onclick="popup('routes_main.php?mode=details&id=456','Details');";else p.doc.queries['#flightInfo button,#flightInfo a']=[p.details];assert.equal(JSON.parse(vm.runInNewContext(renderBlock(source.blocks.departJs,'RetireSoon',null,'123'),{document:p.doc})).ok,false);assert.equal(p.button.clicks,0);}});
 test('planner identity is independent of maintenance display-name casing',()=>{const p=plannerDom({reg:'RetireSoon',rowReg:'RETIRESOON'});const d=createDom(p.doc);assert.equal(d.inspectPlanner('RetireSoon','repair','123').ok,true);assert.equal(d.inspectPlanner('RetireSoon','repair','999').ok,false);});
 
 test('restored condition away from base resolves submission uncertainty, never claims historical completion',()=>{

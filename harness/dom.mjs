@@ -169,11 +169,13 @@ export function createDom(doc = document) {
     const panel = doc.querySelector('#flightInfo');
     if (!visible(panel)) return { hours: null, reason: 'FLIGHT_PANEL_NOT_RECOGNIZED' };
     const m = clean(panel.innerText).match(/Flight time\s+(\d{1,3}):(\d{2}):(\d{2})\b/i);
-    const buttons=[...doc.querySelectorAll('button')].filter(e=>visible(e)&&!e.disabled&&/^flightInfoDepart[0-9]+$/.test(e.id)&&clean(e.innerText)==='Depart');
-    const aircraftId=buttons.length===1?buttons[0].id.slice('flightInfoDepart'.length):null;
+    const buttons=[...doc.querySelectorAll('#flightInfo button,#flightInfo a')].filter(e=>enabled(e)&&/^flightInfoDepart[0-9]+$/.test(e.id)&&clean(e.innerText)==='Depart');
+    const details=[...doc.querySelectorAll('#flightInfo button,#flightInfo a')].filter(e=>enabled(e)&&clean(e.innerText)==='Details').map(e=>(e.getAttribute('onclick')||'').match(/routes_main\.php\?mode=details&id=([0-9]+)/)?.[1]).filter(Boolean);
+    const aircraftId=buttons.length===1&&details.length===1?details[0]:null;
+    const routeId=buttons.length===1?buttons[0].id.slice('flightInfoDepart'.length):null;
     const rows=aircraftId?[...doc.querySelectorAll('.flight-list[data-reg]')].filter(r=>r.id==='flightStatus'+aircraftId):[];
     const regs=rows.length===1?[String(rows[0].dataset.reg||'')]:[];
-    return { aircraftId, hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
+    return { aircraftId, routeId, hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
   }
   return { maintenance, schedule, controls, browserAutomation, navigate, showFleet, openPlanner, inspectPlanner, commit, response, flight, number, handler, registrations };
 }
