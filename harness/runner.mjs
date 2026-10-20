@@ -11,6 +11,7 @@ import { readProductionHolds } from './store.mjs';
 import { OperatorSession } from '../operator/control.mjs';
 import { ResourceCache } from './resource-cache.mjs';
 import { settings } from './settings.mjs';
+import {samePurchaseQuote} from './purchasing.mjs';
 import {validAircraftId,identityRows,excludedAircraft} from './identity.mjs';
 
 export class Runner {
@@ -271,7 +272,7 @@ export class Runner {
     this.verifySource();
     // Existing template re-reads values, calculates amount, and verifies. Bind confirmation to the same quote.
     const before = await this.markets({fresh:true});
-    if (!before[kind]?.ok || JSON.stringify(before[kind]) !== JSON.stringify(market)) throw new Error('MARKET_CHANGED_AFTER_CONFIRMATION');
+    if (!samePurchaseQuote(before[kind],market)) throw new Error('MARKET_CHANGED_AFTER_CONFIRMATION');
     if (this.holds(kind).length) throw new Error('PURCHASE_DURABLE_HOLD');
     const action = this.store.intent({ registration: kind, kind: 'purchase', before, quote: { requested, cost, maximumDebit:Math.ceil(requested*input.price/1000) } });
     report.checkpoint = action.id; report.actionAttempted = { name: 'purchase:' + kind, submitted: 'POSSIBLE', actionId: action.id }; this.store.saveCase(report);

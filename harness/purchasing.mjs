@@ -22,3 +22,6 @@ export function reconcilePurchase(action,markets){
   const result={ok:true,status:'VERIFIED',clickAttempted:true,requested,exactCost,estimatedCost:quotedCost,quotedCost,cashPrecision:'WHOLE_DOLLAR_UI',before:{price:before.pricePer1000,holding:before.holding,cash:before.cash},after:{holding:after.holding,cash:after.cash},holdingIncrease:after.holding-before.holding,cashDecrease:before.cash-after.cash};
   return verifyPurchase(result).result==='PASS'?result:null;
 }
+
+// Countdown/cache metadata is not part of the immutable purchase quote.
+export function samePurchaseQuote(a,b){return Boolean(a?.ok&&b?.ok)&&['kind','pricePer1000','capacityUsed','capacityMax','holding','cash'].every(k=>a[k]===b[k]);}

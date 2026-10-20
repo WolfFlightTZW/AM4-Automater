@@ -1,3 +1,4 @@
+import{fileURLToPath}from'node:url';
 // Synthetic identities and account values only. These tests never connect to AM4.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ import {Store,compactAction} from '../store.mjs';
 import {parseArgs} from '../main.mjs';
 import {Element,plannerDom} from './fake-dom.mjs';
 const fixture=JSON.parse(readFileSync(new URL('../fixtures/states.json',import.meta.url)));
-const source=readSource(process.env.AM4_SOURCE_ROOT||new URL('../../',import.meta.url));
+const source=readSource(process.env.AM4_SOURCE_ROOT||fileURLToPath(new URL('../../',import.meta.url)));
 const snapshot=()=>structuredClone(fixture.completed);
 const record=()=>({id:'synthetic-action',registration:'N-TEST001',aircraftId:'123',kind:'repair',state:'UNKNOWN',quote:{cost:2400},before:structuredClone(fixture.ready),scheduleSeen:false});
 const inventory=(extra={})=>({elevated:false,processes:[{pid:7001,name:'node.exe',commandLine:'node.exe -e synthetic'}],connections:[],tcpInspectionComplete:true,...extra});

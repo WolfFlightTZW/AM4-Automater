@@ -1,7 +1,8 @@
+import{fileURLToPath}from'node:url';
 // Synthetic batch data only. No live AM4, controller ownership or network use.
 import test from 'node:test';import assert from 'node:assert/strict';import{readFileSync,mkdtempSync,rmSync}from'node:fs';import{tmpdir}from'node:os';import{join}from'node:path';
 import{ResourceCache}from'../resource-cache.mjs';import{Runner}from'../runner.mjs';import{Store}from'../store.mjs';import{readSource}from'../source.mjs';
-const source=readSource(process.env.AM4_SOURCE_ROOT||new URL('../../',import.meta.url));
+const source=readSource(process.env.AM4_SOURCE_ROOT||fileURLToPath(new URL('../../',import.meta.url)));
 function market(){return {ok:true,fuel:{ok:true,holding:2000000,capacityMax:4000000,capacityUsed:2000000,pricePer1000:1100,cash:300000000,nextRefreshSeconds:600},co2:{ok:true,holding:2000000,capacityMax:4000000,capacityUsed:2000000,pricePer1000:160,cash:300000000,nextRefreshSeconds:600}};}
 const header=(fuel=2000000,co2=2000000)=>({fuel,co2Percent:co2/4000000*100,cash:300000000});
 const receipt=(fuel=2000000,co2=2000000,version=0)=>({epoch:1,versions:{fuel:version,co2:version},receipt:{fuel:1000,co2:2000,routes:1},header:header(fuel,co2)});
@@ -24,3 +25,4 @@ test('twenty verified departures use one shared batch, one inventory read and ta
  }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
 test('absent receipt evidence invalidates working inventory without throwing',async()=>{const c=new ResourceCache();await c.read(async()=>market());assert.equal(c.debit(null,null),false);assert.equal(c.value,null);});
+test('purchase quote binding ignores ticking deadlines but still binds every transaction value',async()=>{const {samePurchaseQuote}=await import('../purchasing.mjs');const a={...market().fuel,kind:'fuel'},b={...a,nextRefreshSeconds:500,priceValidUntil:123};assert.equal(samePurchaseQuote(a,b),true);for(const key of ['pricePer1000','capacityUsed','capacityMax','holding','cash'])assert.equal(samePurchaseQuote(a,{...b,[key]:a[key]+1}),false);assert.equal(samePurchaseQuote(a,{...b,kind:'co2'}),false);});

@@ -39,7 +39,7 @@ async function action(scenario,registration){
   let r;runner.actionInProgress=true;
   try{r=await runner.measure(scenario==='Departure'?'departureAction':/^Purchase/.test(scenario)?'purchaseAction':'maintenanceAction',()=>runner.execute(scenario));}finally{runner.actionInProgress=false;}
   report.performance=runner.performance.report();
-  report.actions.push({scenario,registration,id:r.id,checkpoint:r.checkpoint,result:r.result,reason:r.reason,submitted:r.actionAttempted?.submitted});
+  report.actions.push({scenario,registration,id:r.id,checkpoint:r.checkpoint,result:r.result,reason:r.reason,submitted:r.actionAttempted?.submitted,inventoryAccounted:r.gameResponse?.inventoryAccounted,inventoryIssue:runner.resources.lastIssue});
   if(r.checkpoint){const a=store.get(r.checkpoint);report.actions.at(-1).state=a.state;}
   report.activeAction=null;save(report);active();
   if(/^(?:OPERATOR_|CDP_|CONTROLLER_|BROWSER_AUTOMATION_|PRODUCTION_SOURCE_CHANGED)/.test(r.reason))throw Object.assign(new Error(r.reason),{processDiagnostics:r.processDiagnostics});
