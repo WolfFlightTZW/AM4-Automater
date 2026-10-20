@@ -165,6 +165,26 @@ export function createDom(doc = document) {
     button.click(); return { ok: true, clicked: true, cashBefore: balance, at: new Date().toISOString() };
   }
   function response() { return { text: clean(doc.querySelector('#maintPlanActionDo')?.innerText).slice(0, 2500), controls: controls() }; }
+  function inventory(){
+    const n=id=>number(doc.getElementById(id)?.innerText),pct=String(doc.getElementById('headerCo2Indicator')?.style?.height||'').match(/^([0-9]+(?:\.[0-9]+)?)%$/);
+    return {fuel:n('headerFuel'),cash:n('headerAccount'),co2Percent:pct?Number(pct[1]):null};
+  }
+  function receipt(){
+    const root=doc.getElementById('routesDepartScreenContent');
+    let monitor=globalThis.__am4BatchReceipt;
+    if(root&&(!monitor||monitor.root!==root)){
+      monitor?.observer.disconnect();if(monitor?.timer)clearTimeout(monitor.timer);
+      const versions={fuel:0,co2:0},observer=new MutationObserver(ms=>{for(const m of ms)for(const [id,key] of [['fd_fuel','fuel'],['fd_quotas','co2']]){const e=doc.getElementById(id);if(e&&(m.target===e||e.contains(m.target)||[...m.addedNodes].some(n=>n===e||n.contains?.(e))))versions[key]++;}});
+      observer.observe(root,{subtree:true,childList:true,characterData:true});
+      monitor=globalThis.__am4BatchReceipt={root,observer,versions,epoch:Date.now()};
+    }
+    if(monitor){clearTimeout(monitor.timer);monitor.timer=setTimeout(()=>{monitor.observer.disconnect();if(globalThis.__am4BatchReceipt===monitor)delete globalThis.__am4BatchReceipt;},120000);}
+    return {epoch:monitor?.epoch,versions:monitor?{...monitor.versions}:null,receipt:{fuel:number(doc.getElementById('fd_fuel')?.innerText),co2:number(doc.getElementById('fd_quotas')?.innerText),routes:number(doc.getElementById('fd_routes')?.innerText)},header:inventory()};
+  }
+  function departureObservation(id){
+    const rows=[...doc.querySelectorAll('[id="flightStatus'+id+'"]')].map(r=>({aircraftId:id,registration:r.dataset.reg,wear:number(r.querySelector('[id^="flightStatusWear"]')?.textContent),status:clean(r.querySelector('[id^="flightStatusCounter"]')?.textContent).toLowerCase(),grounded:r.dataset.grounded,location:r.parentElement?.id||null}));
+    return {rows,...receipt()};
+  }
   function flight() {
     const panel = doc.querySelector('#flightInfo');
     if (!visible(panel)) return { hours: null, reason: 'FLIGHT_PANEL_NOT_RECOGNIZED' };
@@ -175,12 +195,12 @@ export function createDom(doc = document) {
     const routeId=buttons.length===1?buttons[0].id.slice('flightInfoDepart'.length):null;
     const rows=aircraftId?[...doc.querySelectorAll('.flight-list[data-reg]')].filter(r=>r.id==='flightStatus'+aircraftId):[];
     const regs=rows.length===1?[String(rows[0].dataset.reg||'')]:[];
-    return { aircraftId, routeId, hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
+    return { aircraftId, routeId, fuelRequired:number(clean(panel.innerText).match(/Fuel usage\s+([\d,]+)\s*Lbs/i)?.[1]),header:inventory(), hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
   }
-  return { maintenance, schedule, controls, browserAutomation, navigate, showFleet, openPlanner, inspectPlanner, commit, response, flight, number, handler, registrations };
+  return { maintenance, schedule, controls, browserAutomation, navigate, showFleet, openPlanner, inspectPlanner, commit, response, flight, inventory, receipt, departureObservation, number, handler, registrations };
 }
 export function domExpression(method, args = []) {
-  if (!['maintenance', 'schedule', 'controls', 'browserAutomation', 'navigate', 'showFleet', 'openPlanner', 'inspectPlanner', 'commit', 'response', 'flight'].includes(method)) throw new Error('DOM_METHOD_NOT_ALLOWED');
+  if (!['maintenance', 'schedule', 'controls', 'browserAutomation', 'navigate', 'showFleet', 'openPlanner', 'inspectPlanner', 'commit', 'response', 'flight', 'inventory', 'receipt', 'departureObservation'].includes(method)) throw new Error('DOM_METHOD_NOT_ALLOWED');
   return `(async()=>JSON.stringify(await (${createDom.toString()})(document)[${JSON.stringify(method)}](...${JSON.stringify(args)})))()`;
 }
 

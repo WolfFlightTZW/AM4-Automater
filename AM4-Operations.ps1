@@ -91,7 +91,8 @@ $marketJs=@'
   const price=t.match(new RegExp((kind==='co2'?'QUOTA COST':'CURRENT PRICE')+'\\s*\\$\\s*([\\d,]+)','i'));
   const cap=t.match(/CAPACITY\s*([\d,]+)\s*\/\s*([\d,]+)/i),hold=t.match(/HOLDING\s*([\d,]+)/i);
   const account=clean(document.body?.innerText).match(/\bACCOUNT\s*\$\s*([\d,]+)/i);
-  return {ok:!!(price&&cap&&hold&&account),kind,pricePer1000:n(price?.[1]),capacityUsed:n(cap?.[1]),capacityMax:n(cap?.[2]),holding:n(hold?.[1]),cash:n(account?.[1])};
+  const timer=clean(document.getElementById(kind==='fuel'?'fuelTimer':'co2Timer')?.innerText).match(/^(\d{1,3}):(\d{2}):(\d{2})$/),nextRefreshSeconds=timer&&Number(timer[2])<60&&Number(timer[3])<60?Number(timer[1])*3600+Number(timer[2])*60+Number(timer[3]):null;
+  return {ok:!!(price&&cap&&hold&&account),kind,nextRefreshSeconds,pricePer1000:n(price?.[1]),capacityUsed:n(cap?.[1]),capacityMax:n(cap?.[2]),holding:n(hold?.[1]),cash:n(account?.[1])};
  };
  const fuel=read('fuel'),fuelMs=Date.now()-inspectionStarted,co2Started=Date.now();
  const tab=document.querySelector('#popBtn2');if(!tab||!vis(tab)||!/CO2|CO\u2082/i.test(clean(tab.innerText)))return JSON.stringify({ok:false,reason:'CO2 tab unavailable',fuel});

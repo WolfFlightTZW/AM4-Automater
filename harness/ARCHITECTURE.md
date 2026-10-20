@@ -17,7 +17,7 @@ Node.js 24+ supplies WebSocket, SQLite and node:test. No npm dependencies or add
 | `store.mjs` | Compact durable recovery journal; indexed uncertainty queries; bounded summaries |
 | `identity.mjs` | Current-DOM numeric IDs, full display names and session-scoped exclusion identity |
 | `performance.mjs` | Bounded in-memory per-pass timings, counters and recovery-backoff classification |
-| `resource-cache.mjs` | Short-lived observed values only; invalidation, no predicted balance ledger |
+| `resource-cache.mjs` | Countdown-bound prices and receipt-accounted session inventory; invalidation, no durable balance ledger |
 | `settings.mjs`, `production-settings.json` | Validated central cadence/cache/backoff settings |
 | `cadence.mjs` | Awaited inter-pass wait with frequent ownership checks and recovery backoff |
 | `fleet-heartbeat.mjs` | Session-only verified-departure counter and interruptible Fleet display between actions |
@@ -44,7 +44,7 @@ Fresh quotes and actual controls are bound immediately before irreversible work.
 
 ## Observation reuse
 
-Repeated resource reads may reuse an observation for at most the configured 10 seconds. Purchases force fresh reads before binding and after execution. Any irreversible attempt invalidates it before send, including an ambiguous send. Ownership failure, disconnect and close invalidate it as well. No quantities are projected across flights.
+Standalone tests retain the short observation TTL. Production keeps session-local working inventory from version-bound single-flight receipts, with fuel-header and CO2-gauge consistency checks. Prices expire at the observed countdown deadline; missing countdowns use the short TTL. Low stock, inconsistent headers, unknown outcomes, disconnect and close invalidate inventory and force real UI reads. Purchases still force fresh quotes and verification. One shared fleet observation serves a rotating twenty-candidate batch; departure completion reads only its target. See DESIGN.md for exact cache and purchase-check cadence.
 
 The ten-dispatch-only strategy is deliberately not active: route consumption is not yet proven sufficiently to retain that observation safely. Early invalidation after every dispatch is currently required.
 

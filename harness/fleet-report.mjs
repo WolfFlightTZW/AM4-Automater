@@ -1,10 +1,10 @@
 import { writeFileSync,renameSync,existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
-export async function highCycleReport(runner,{limit=300}={}) {
+export async function highCycleReport(runner,{limit=300,fleetObservation=null}={}) {
   const path=join(runner.options.productionRoot,'reports','fleet-detail-checkpoint.json');
   let saved=existsSync(path)?JSON.parse(readFileSync(path,'utf8')):{aircraft:[],errors:[]};
   saved.excluded ||= [];
-  const fleet=[...new Map((await runner.fleet()).map(a=>[a.registration,a])).values()]; let inspected=0;
+  const fleet=[...new Map((fleetObservation||await runner.fleet()).map(a=>[a.registration,a])).values()]; let inspected=0;
   saved.aircraft=[...new Map(saved.aircraft.map(a=>[a.registration,a])).values()];
   saved.excluded=[...new Map(saved.excluded.map(a=>[a.registration,a])).values()];
   const current=new Set(fleet.map(a=>a.registration)),age=a=>Date.parse(a?.captured||'')||0;

@@ -34,7 +34,7 @@ export class Runner {
   }
   remaining() { const ms = this.deadline - Date.now(); if (ms <= 0) throw new Error('SCENARIO_TIME_BUDGET_EXHAUSTED'); return ms; }
   async evaluate(expression, label) {
-    if(/DOM\.commit|source\.purchase|source\.departJs/.test(label))this.resources.invalidate();
+    if(/source\.purchase/.test(label)||/DOM\.commit|source\.departJs/.test(label)&&!this.batchSnapshot)this.resources.invalidate();
     this.cdp.timeoutMs = Math.min(String(label).startsWith('source.purchaseJsTemplate')?17000:12000, this.remaining());
     let value;
     try{value=await this.cdp.evaluate(expression,label);}catch(error){this.resources.invalidate();throw error;}
@@ -42,12 +42,12 @@ export class Runner {
     this.sequence++;
     return value;
   }
-  dom(method, args = []) { return this.evaluate(domExpression(method, args), 'DOM.' + method); }
-  async nav(view) { const result = await this.dom('navigate', [view]); if (!result.ok) throw new Error(result.reason); }
-  measure(name,operation){return this.performance?this.performance.measure(name,operation):operation();}
+  dom(method,args=[]){const read=()=>this.evaluate(domExpression(method,args),'DOM.'+method);return method==='openPlanner'?this.measure('navigation',read):read();}
+  async nav(view) { const result = await this.measure('navigation',()=>this.dom('navigate',[view])); if (!result.ok) throw new Error(result.reason); }
+  measure(name,operation){if(!this.performance)return operation();return name==='navigation'&&this.actionInProgress?this.performance.measure('actionNavigation',()=>this.performance.measure(name,operation)):this.performance.measure(name,operation);}
   async markets({fresh=false}={}) {
     try{this.operator?.assertCanCommit();}catch(error){this.resources.invalidate();throw error;}
-    return this.resources.read(()=>this.measure('resourceInspection',async()=>{const value=await this.evaluate(this.source.blocks.marketJs,'source.marketJs');for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);return value;}),{fresh});
+    return this.resources.read(()=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(this.source.blocks.marketJs,'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);return value;}),{fresh});
   }
   async fleet() { const rows=await this.measure('fleetScan',()=>this.evaluate(this.source.blocks.fleetJs,'source.fleetJs'));this.aircraftIds.clear();for(const a of rows){if(validAircraftId(a.aircraftId)&&rows.filter(r=>r.registration===a.registration).length===1)this.aircraftIds.set(a.registration,a.aircraftId);if(a.registration==='N-145'&&validAircraftId(a.aircraftId))this.excludedIds.add(a.aircraftId);}return rows; }
   async snapshot({ markets = false } = {}) {
@@ -137,7 +137,8 @@ export class Runner {
   async maintenance(report, kind, chain) {
     const reg = this.options.registration;
     if (!reg) throw new Error('EXPLICIT_REGISTRATION_REQUIRED');
-    report.startingState = await this.snapshot();
+    report.startingState = this.batchSnapshot||await this.snapshot();
+    if(this.batchSnapshot){await this.nav('plan');report.startingState={...this.batchSnapshot,maintenance:await this.dom('maintenance')};}
     const eligibility = maintenanceEligibility(report.startingState, reg, kind, this.holds(reg));
     report.gameResponse = { eligibility };
     if (!eligibility.eligible) { report.reason = 'NO_ELIGIBLE_AIRCRAFT'; report.endingState = report.startingState; return; }
@@ -147,10 +148,10 @@ export class Runner {
     if (!this.options.live) { report.actionAttempted = { name: 'PlannerInspectionOnly', submitted: false }; report.endingState = { quote }; report.result = 'PASS'; report.reason = 'NO_IRREVERSIBLE_ACTION_READ_ONLY_MODE'; return; }
     await this.confirm(kind, reg, quote.cost);
     // Confirmation may take time. Refresh the actual schedule and the quote before persisting intent.
-    const fresh = await this.snapshot();
+    const fresh = this.batchSnapshot?report.startingState:await this.snapshot();
     const e = maintenanceEligibility(fresh, reg, kind, this.holds(reg));
     if (!e.eligible || e.row.id !== eligibility.row.id) throw new Error('ELIGIBILITY_CHANGED_AFTER_CONFIRMATION');
-    const current = await this.dom('openPlanner', [{ registration: reg, kind, id: e.row.id }]);
+    const current = await this.dom(this.batchSnapshot?'inspectPlanner':'openPlanner',this.batchSnapshot?[reg,kind,e.row.id]:[{registration:reg,kind,id:e.row.id}]);
     if (!current.ok || current.cost !== quote.cost || current.time !== quote.time || current.row.wear !== quote.row.wear || current.row.hoursToCheck !== quote.row.hoursToCheck) throw new Error('QUOTE_CHANGED_AFTER_CONFIRMATION');
     quote = current;
     await this.guard.check();
@@ -165,7 +166,8 @@ export class Runner {
     action.state = 'UNKNOWN'; this.store.saveAction(action);
     await this.pause(750);
     report.gameResponse.response = await this.dom('response');
-    const observed=await this.snapshot();
+    let observed;
+    if(this.batchSnapshot){await this.nav('schedule');observed={...fresh,schedule:await this.dom('schedule')};this.batchSnapshot.schedule=observed.schedule;}else observed=await this.snapshot();
     // Scheduling verification belongs to the current action. Waiting for a maintenance
     // timer does not keep the interface occupied across a manual-pause request.
     const first=this.options.scenario==='Production'?reconcileRecovery(action,observed):reconcile(action,observed);action.state=first.state;action.scheduleSeen ||= first.scheduleSeen;this.store.saveAction(action);
@@ -206,36 +208,54 @@ export class Runner {
   async departure(report) {
     const reg = this.options.registration; if (!reg) throw new Error('EXPLICIT_REGISTRATION_REQUIRED');
     const offered=this.dispatchSnapshot;this.dispatchSnapshot=null;
-    report.startingState=offered&&offered.sequence===this.sequence&&Date.now()-(offered.finished??Date.parse(offered.value.captured))<=2000?offered.value:await this.snapshot({markets:true});
+    report.startingState=this.batchSnapshot||(offered&&offered.sequence===this.sequence&&Date.now()-(offered.finished??Date.parse(offered.value.captured))<=2000?offered.value:await this.snapshot({markets:true}));
     const initial=identityRows(report.startingState,reg);
     const aircraftId=initial.id;if(!validAircraftId(aircraftId))throw new Error('AIRCRAFT_ID_REQUIRED');
     const selected = await this.evaluate(renderBlock(this.source.blocks.selectJs, reg,null,aircraftId), 'source.selectJs');
     if (!selected.ok) throw new Error('DEPARTURE_SELECTION_FAILED');
     await this.pause(650); let flight = await this.dom('flight');
+    if(this.batchSnapshot){
+      if(!this.resources.observeHeader(flight.header)||this.resources.low()||Number.isSafeInteger(flight.fuelRequired)&&flight.fuelRequired>this.resources.value?.fuel?.holding){await this.markets({fresh:true});await this.evaluate(renderBlock(this.source.blocks.selectJs,reg,null,aircraftId),'source.selectJs');await this.pause(650);flight=await this.dom('flight');if(!this.resources.observeHeader(flight.header))throw new Error('RESOURCE_OBSERVATION_UNCERTAIN');}
+      report.startingState.markets=structuredClone(this.resources.value);
+    }
     const hours = flight.aircraftId===aircraftId&&flight.registrations?.length === 1 && flight.registrations[0] === reg ? flight.hours : null;
     const eligible = departureEligibility(report.startingState, reg, this.holds(reg), hours);
+    if(Number.isSafeInteger(flight.fuelRequired)&&flight.fuelRequired>report.startingState.markets?.fuel?.holding){eligible.eligible=false;eligible.reasons.push('INSUFFICIENT_ROUTE_FUEL');}
     report.gameResponse = { selected, flight, eligible };
     if (!eligible.eligible) { report.endingState = report.startingState; report.reason = 'DEPARTURE_NOT_ELIGIBLE'; return; }
     if (!this.options.live) { report.result = 'PASS'; report.reason = 'DEPARTURE_ELIGIBILITY_ONLY'; report.endingState = report.startingState; return; }
     await this.confirm('departure', reg, null);
-    const fresh = await this.snapshot({ markets: true });
-    await this.evaluate(renderBlock(this.source.blocks.selectJs, reg,null,aircraftId), 'source.selectJs');
-    await this.pause(650); flight = await this.dom('flight');
+    const fresh = this.batchSnapshot||await this.snapshot({ markets: true });
+    if(!this.batchSnapshot){await this.evaluate(renderBlock(this.source.blocks.selectJs,reg,null,aircraftId),'source.selectJs');await this.pause(650);}
+    flight=await this.dom('flight');
+    if(this.batchSnapshot&&!this.resources.observeHeader(flight.header))throw new Error('RESOURCE_OBSERVATION_UNCERTAIN');
     if (identityRows(fresh,reg).id!==aircraftId||excludedAircraft(fresh,identityRows(fresh,reg).aircraft)||flight.aircraftId!==aircraftId||flight.registrations?.length !== 1 || flight.registrations[0] !== reg || !departureEligibility(fresh, reg, this.holds(reg), flight.hours).eligible) throw new Error('DEPARTURE_PRECOMMIT_CHANGED');
     await this.guard.check();
     this.verifySource();
+    const beforeReceipt=this.batchSnapshot?await this.dom('receipt'):null;
     const action = this.store.intent({ registration: reg, kind: 'departure', aircraftId, before: fresh });
     report.checkpoint = action.id; report.actionAttempted = { name: 'departure', submitted: 'POSSIBLE', actionId: action.id }; this.store.saveCase(report);
     const result = await this.evaluate(renderBlock(this.source.blocks.departJs, reg,null,aircraftId), 'source.departJs');
     report.actionAttempted.submitted = Boolean(result.ok);
     action.state = result.ok ? 'UNKNOWN' : 'NOT_SUBMITTED'; this.store.saveAction(action); report.gameResponse.commit = result;
-    for (let count = 0; result.ok && count < 8; count++) {
-      await this.pause(750); const fleet = await this.fleet(); report.endingState = { fleet };
-      const rows = fleet.filter(r => r.aircraftId === aircraftId);
-      if (rows.length === 1 && rows[0].location === 'inflightList') { action.state = 'DEPARTED_VERIFIED'; this.store.saveAction(action); report.result = 'PASS'; report.reason = 'EXISTING_DEPARTURE_ACTION_VERIFIED'; break; }
+    for(let count=0;result.ok&&count<8;count++){
+      await this.pause(750);
+      if(this.batchSnapshot){
+        const observed=await this.dom('departureObservation',[aircraftId]);report.endingState={target:observed.rows};
+        if(observed.rows.length===1&&observed.rows[0].location==='inflightList'){
+          action.state='DEPARTED_VERIFIED';this.store.saveAction(action);report.result='PASS';report.reason='EXISTING_DEPARTURE_ACTION_VERIFIED';
+          Object.assign(this.batchSnapshot.fleet.find(a=>a.aircraftId===aircraftId),observed.rows[0]);
+          report.gameResponse.inventoryAccounted=this.resources.debit(beforeReceipt,observed);break;
+        }
+      }else{
+        const fleet=await this.fleet();report.endingState={fleet};const rows=fleet.filter(r=>r.aircraftId===aircraftId);
+        if(rows.length===1&&rows[0].location==='inflightList'){action.state='DEPARTED_VERIFIED';this.store.saveAction(action);report.result='PASS';report.reason='EXISTING_DEPARTURE_ACTION_VERIFIED';break;}
+      }
     }
-    report.endingState ||= { fleet: await this.fleet() };
+    if(this.batchSnapshot&&report.result!=='PASS'){this.resources.invalidate();report.endingState||={targetUnavailable:true};}
+    else report.endingState||={fleet:await this.fleet()};
   }
+
   async purchase(report, kind) {
     report.startingState = { markets: await this.markets({fresh:true}) };
     const market = report.startingState.markets[kind];
