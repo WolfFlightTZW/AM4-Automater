@@ -132,7 +132,7 @@ check('Repair and A-check eligibility use explicit UI identity', fixture.ready, 
 });
 for (const [name, mutate] of [
   ['duplicate fleet',s=>s.fleet.push(clone(s.fleet[0]))],['duplicate maintenance',s=>s.maintenance.records.push(clone(s.maintenance.records[0]))],
-  ['away from base',s=>s.maintenance.records[0].atBase=false],['missing values',s=>s.maintenance.records[0].wear=null],
+  ['missing values',s=>s.maintenance.records[0].wear=null],
   ['grounded',s=>s.fleet[0].grounded='1'],['pending work',s=>s.schedule.entries.push({registration:'N-TEST001',kind:'check'})],['unknown schedule',s=>s.schedule.complete=false]
 ]) check('Reject maintenance: '+name,fixture.ready,'MaintenanceEligibility',()=>{const s=clone(fixture.ready);mutate(s);assert.equal(maintenanceEligibility(s,'N-TEST001','repair').eligible,false)});
 check('Durable holds block either maintenance kind', fixture.ready,'MaintenanceEligibility',()=>{for(const kind of ['repair','check'])assert.equal(maintenanceEligibility(fixture.ready,'N-TEST001',kind,[{state:'UNKNOWN'}]).eligible,false)});

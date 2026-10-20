@@ -8,7 +8,7 @@ import { Store } from './store.mjs';
 import { readSource } from './source.mjs';
 import { acquireGuard } from './guard.mjs';
 import { Cdp } from './cdp.mjs';
-import { maintenanceEligibility,departureEligibility,reconcileRecovery } from './policy.mjs';
+import { maintenanceChoice,departureEligibility,reconcileRecovery } from './policy.mjs';
 import { highCycleReport } from './fleet-report.mjs';
 import { OperatorSession } from '../operator/control.mjs';
 import { purchaseDecision,reconcilePurchase } from './purchasing.mjs';
@@ -106,11 +106,11 @@ try{
       }
       // Unknown purchase outcomes retain only that resource's durable hold.
     }
-    save(report);stage('INDIVIDUAL_MAINTENANCE');let maintenanceCount=0;
-    const planned=snapshot.fleet.filter(a=>['landedList','parkedList'].includes(a.location)).map(a=>({aircraft:a,kind:maintenanceEligibility(snapshot,a.registration,'check',runner.holds(a.registration)).eligible?'check':maintenanceEligibility(snapshot,a.registration,'repair',runner.holds(a.registration)).eligible?'repair':null})).filter(a=>a.kind).sort((a,b)=>(a.kind==='check'?0:1)-(b.kind==='check'?0:1));
+    save(report);stage('INDIVIDUAL_MAINTENANCE');let maintenanceCount=0;const maintenanceHandled=new Set();
+    const planned=snapshot.fleet.filter(a=>['landedList','parkedList'].includes(a.location)).map(a=>({aircraft:a,kind:maintenanceChoice(snapshot,a.registration,runner.holds(a.registration))})).filter(a=>a.kind).sort((a,b)=>(a.kind==='check'?0:1)-(b.kind==='check'?0:1));
     for(const {aircraft:a,kind} of planned){
       if(maintenanceCount>=maxMaintenance||Date.now()>passDeadline-30000)break;
-      const r=await action(kind==='check'?'ACheck':'Repair',a.registration);maintenanceCount++;
+      const r=await action(kind==='check'?'ACheck':'Repair',a.registration);maintenanceCount++;maintenanceHandled.add(a.aircraftId);
       report.maintenanceActions.push({registration:a.registration,kind,result:r.result,reason:r.reason,checkpoint:r.checkpoint});
       await purchaseMarkets('AFTER_MAINTENANCE');
     }
@@ -121,6 +121,7 @@ try{
     for(const a of candidates){
       if(report.verifiedDepartures.length>=maxDepartures||Date.now()>passDeadline-15000)break;
       runner.performance.counts.examined++;
+      if(maintenanceHandled.has(a.aircraftId)){runner.performance.counts.skipped++;report.held.push({registration:a.registration,reasons:['MAINTENANCE_ATTEMPTED_THIS_PASS']});continue;}
       const e=departureEligibility(snapshot,a.registration,runner.holds(a.registration),null);
       if(e.reasons.some(reason=>reason!=='FLIGHT_DURATION_UNKNOWN')){runner.performance.counts.skipped++;report.held.push({registration:a.registration,reasons:e.reasons});continue;}
       runner.dispatchSnapshot=dispatchObservation;

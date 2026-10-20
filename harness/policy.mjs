@@ -17,25 +17,31 @@ export function verifyPurchase(result) {
     return { result: 'INCONCLUSIVE', reason: 'DELTAS_NOT_EXACT_CONCURRENT_ACTIVITY_OR_UNKNOWN_OUTCOME' };
   return { result: 'PASS', reason: result.cashPrecision==='WHOLE_DOLLAR_UI'?'EXACT_QUANTITY_AND_WHOLE_DOLLAR_CASH_INTERVAL':'EXACT_REQUEST_AND_COST_OBSERVED' };
 }
-export function maintenanceEligibility(snapshot, registration, kind, holds = [], {requireBase=true}={}) {
+export function maintenanceEligibility(snapshot, registration, kind, holds = [], {requireAction=true}={}) {
   const reasons = [];
   const {fleet,aircraft,rows,row,id}=identityRows(snapshot,registration);
   if(!validAircraftId(id))reasons.push('AIRCRAFT_ID_UNKNOWN');
   if (excludedAircraft(snapshot,aircraft)) reasons.push('EXCLUDED_AIRCRAFT');
   if (fleet.length !== 1 || !aircraft || !['landed','parked'].includes(aircraft.status) || !['landedList','parkedList'].includes(aircraft.location) || aircraft.grounded !== '0') reasons.push('NOT_UNIQUELY_LANDED_UNGROUNDED');
-  if (rows.length !== 1 || !row || (requireBase && !row.atBase) || !row.id || ![row.wear, row.hoursToCheck].every(v => Number.isFinite(v) && v >= 0)) reasons.push('MAINTENANCE_IDENTITY_LOCATION_OR_VALUES_UNKNOWN');
+  if (rows.length !== 1 || !row || !row.id || ![row.wear, row.hoursToCheck].every(v => Number.isFinite(v) && v >= 0)) reasons.push('MAINTENANCE_IDENTITY_LOCATION_OR_VALUES_UNKNOWN');
   if (!snapshot.schedule?.complete) reasons.push('SCHEDULE_INCOMPLETE');
   if ((snapshot.schedule?.entries || []).some(e => scheduleMatches(e,aircraft?.registration||registration,id))) reasons.push('EXISTING_SCHEDULE');
   if (holds.length) reasons.push('DURABLE_ACTION_HOLD');
-  if(requireBase&&!row?.availableActions?.includes(kind))reasons.push('ACTION_NOT_AVAILABLE');
+  if(requireAction&&!row?.availableActions?.includes(kind))reasons.push('ACTION_NOT_AVAILABLE');
   if (row && (kind === 'repair' ? !(row.wear > 9) : !(row.hoursToCheck <= 20))) reasons.push('NOT_DUE');
   return { eligible: reasons.length === 0, reasons, aircraft, row };
 }
+export function maintenanceChoice(snapshot,registration,holds=[]){
+  if(maintenanceEligibility(snapshot,registration,'check',holds).eligible)return 'check';
+  if(maintenanceEligibility(snapshot,registration,'repair',holds).eligible)return 'repair';
+  return null;
+}
 export function departureEligibility(snapshot, registration, holds = [], flightHours = null) {
-  // Base location gates maintenance, not a normal return flight from another airport.
-  const e = maintenanceEligibility(snapshot, registration, 'repair', holds, {requireBase:false});
+  // An unavailable maintenance action never grounds a return flight.
+  const e = maintenanceEligibility(snapshot, registration, 'repair', holds, {requireAction:false});
   const reasons = e.reasons.filter(r => r !== 'NOT_DUE');
-  if (!e.row || !Number.isFinite(e.row.wear) || e.row.wear > 9 || !Number.isFinite(e.aircraft?.wear) || e.aircraft.wear > 9) reasons.push('WEAR_UNSAFE_OR_UNKNOWN');
+  if (!e.row || !Number.isFinite(e.row.wear) || !Number.isFinite(e.aircraft?.wear)) reasons.push('WEAR_UNKNOWN');
+  if(maintenanceChoice(snapshot,registration,holds))reasons.push('MAINTENANCE_ACTION_AVAILABLE');
   if (!Number.isFinite(flightHours) || flightHours <= 0) reasons.push('FLIGHT_DURATION_UNKNOWN');
   else if (!Number.isFinite(e.row?.hoursToCheck) || e.row.hoursToCheck <= flightHours) reasons.push('INSUFFICIENT_CHECK_HOURS');
   if (!snapshot.markets?.ok || ![snapshot.markets.fuel?.holding, snapshot.markets.co2?.holding].every(v => Number.isSafeInteger(v) && v >= 75000)) reasons.push('DISPATCH_RESOURCE_GATE');

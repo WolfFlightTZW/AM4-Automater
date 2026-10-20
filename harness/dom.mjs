@@ -149,7 +149,7 @@ export function createDom(doc = document) {
   function cash() { const m = clean(doc.body?.innerText).match(/\bACCOUNT\s*\$\s*([\d,]+)/i); return m ? number(m[1]) : null; }
   function commit({ registration, kind, id, quote, actionId, excludedAircraftIds=[] }) {
     const fresh = inspectPlanner(registration, kind, id);
-    if (!fresh.ok || fresh.cost !== quote.cost || fresh.time !== quote.time || fresh.row.wear !== quote.row.wear || fresh.row.hoursToCheck !== quote.row.hoursToCheck || !fresh.row.atBase)
+    if (!fresh.ok || fresh.cost !== quote.cost || fresh.time !== quote.time || fresh.row.wear !== quote.row.wear || fresh.row.hoursToCheck !== quote.row.hoursToCheck)
       return { ok: false, clicked: false, reason: 'PRECOMMIT_PLANNER_CHANGED', fresh };
     const balance = cash();
     if (!Number.isSafeInteger(balance) || balance - fresh.cost < 100000000 || browserAutomation().length) return { ok: false, clicked: false, reason: 'CASH_OR_BROWSER_AUTOMATION_GATE' };

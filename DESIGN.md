@@ -17,13 +17,13 @@ One Node.js 24+ worker owns the existing Steam CefSharp CDP session at `127.0.0.
 | Reserve | Preserve $100,000,000, including conservative reservations for unresolved spending |
 | Purchasing | No minimum lot, required departure count or storage-empty threshold; fresh quote/quantity binding before commit |
 | Verification | Exact requested inventory increase; cash debit within floor/ceiling of the exact cost when AM4 displays whole dollars |
-| Repair | Individual eligible landed/parked, ungrounded aircraft at base; wear >9%; actual available planner control |
+| Repair | Individual eligible landed/parked, ungrounded aircraft; wear >9%; actual enabled Repair and planner controls |
 | A-check | Individual eligible aircraft with <=20 hours remaining; prioritize when eligible; never wait for eligibility before doing other work |
-| Departure | Unique landed/parked ungrounded identity; wear <=9%; no schedule conflict or uncertain target transaction; A-check hours strictly exceed actual flight duration; both resources >=75,000; verify inflight state |
+| Departure | Unique landed/parked ungrounded identity and enabled Depart; unavailable maintenance does not prohibit flight, including wear >9%; no schedule conflict or uncertain target transaction; A-check hours strictly exceed actual flight duration; both resources >=75,000; verify inflight state |
 | Exclusion | Never operate sold N-145; do not treat absent fleet aircraft as available |
 | Forbidden | No bulk maintenance, aircraft purchases/sales, instant delivery, trading or account changes |
 
-An individual planner and final commit revalidate identity, quote, current controls, location and cash. Actual AM4 restrictions take precedence over assumed combinations of actions. A failed or uncertain submission is never blindly repeated.
+An individual planner and final commit revalidate identity, quote, current controls, location and cash. For each aircraft, an enabled due A-check (<=20 hours) takes priority, then an enabled due Repair (>9% wear), otherwise departure is evaluated. Unavailable maintenance or being away from base never independently grounds an aircraft. After a maintenance attempt the controller moves to another aircraft for the rest of that pass. A due enabled maintenance action deferred by the existing pass budget retains priority rather than being bypassed with a departure. Actual AM4 restrictions take precedence over assumed combinations of actions. A failed or uncertain submission is never blindly repeated.
 
 ## Controller lifecycle
 

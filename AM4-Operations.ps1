@@ -423,7 +423,7 @@ try{
  const reg=$regJson,rows=[...document.querySelectorAll('#landedList .flight-list[data-reg],#parkedList .flight-list[data-reg]')].filter(r=>r.dataset.reg===reg);
  if(rows.length!==1)return JSON.stringify({ok:false,reason:'aircraft missing or ambiguous'});
  const r=rows[0],t=(r.querySelector('[id^="flightStatusWear"]')?.textContent||'').trim(),wear=/^\d+(\.\d+)?$/.test(t)?Number(t):NaN;
- if(!Number.isFinite(wear)||wear>9||r.dataset.grounded!=='0'||!['landed','parked'].includes((r.querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase()))return JSON.stringify({ok:false,reason:'changed eligibility'});
+ if(!Number.isFinite(wear)||r.dataset.grounded!=='0'||!['landed','parked'].includes((r.querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase()))return JSON.stringify({ok:false,reason:'changed eligibility'});
  r.click();return JSON.stringify({ok:true,wear});
 })()
 "@
@@ -435,7 +435,7 @@ try{
  const reg=$regJson,rows=[...document.querySelectorAll('#landedList .flight-list[data-reg],#parkedList .flight-list[data-reg]')].filter(r=>r.dataset.reg===reg);
  if(rows.length!==1)return JSON.stringify({ok:false,reason:'landed row changed'});
  const r=rows[0],t=(r.querySelector('[id^="flightStatusWear"]')?.textContent||'').trim(),wear=/^\d+(\.\d+)?$/.test(t)?Number(t):NaN;
- if(!Number.isFinite(wear)||wear>9||r.dataset.grounded!=='0'||!['landed','parked'].includes((r.querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase()))return JSON.stringify({ok:false,reason:'ineligible at action'});
+ if(!Number.isFinite(wear)||r.dataset.grounded!=='0'||!['landed','parked'].includes((r.querySelector('[id^="flightStatusCounter"]')?.textContent||'').trim().toLowerCase()))return JSON.stringify({ok:false,reason:'ineligible at action'});
  const visible=e=>!!e.getClientRects().length;
  const buttons=[...document.querySelectorAll('button')].filter(b=>/^flightInfoDepart\d+$/.test(b.id)&&b.innerText.trim()==='Depart'&&visible(b)&&!b.disabled);
  if(buttons.length!==1)return JSON.stringify({ok:false,reason:'Depart button ambiguous',count:buttons.length});
