@@ -1,6 +1,6 @@
 // Session-only observations and receipt-accounted working inventory. Nothing is persisted.
 export class ResourceCache {
-  constructor({maxAgeMs=10000,now=Date.now}={}){this.maxAgeMs=maxAgeMs;this.now=now;this.batch=false;this.invalidate();this.metrics={reads:0,hits:0,invalidations:0,receiptDebits:0,uncertainDebits:0,headerMismatches:0};}
+  constructor({maxAgeMs=10000,unreliableTimerRetryMs=60000,now=Date.now}={}){this.unreliableTimerRetryMs=unreliableTimerRetryMs;this.maxAgeMs=maxAgeMs;this.now=now;this.batch=false;this.invalidate();this.metrics={reads:0,hits:0,invalidations:0,receiptDebits:0,uncertainDebits:0,headerMismatches:0};}
   invalidate(){this.value=null;this.at=0;if(this.metrics)this.metrics.invalidations++;}
   priceDue(){return !this.value||['fuel','co2'].some(k=>this.now()>=(this.value[k]?.priceValidUntil??this.at+this.maxAgeMs));}
   low(){return !this.value||['fuel','co2'].some(k=>!Number.isSafeInteger(this.value[k]?.holding)||this.value[k].holding<250000);}
@@ -26,7 +26,7 @@ export class ResourceCache {
   async read(load,{fresh=false}={}){
     if(!fresh&&this.value&&(this.batch?!this.priceDue():this.now()-this.at<this.maxAgeMs)){this.metrics.hits++;return structuredClone(this.value);}
     this.invalidate();this.metrics.reads++;const value=await load();
-    if(value?.ok){this.at=this.now();this.value=structuredClone(value);for(const k of ['fuel','co2'])if(Number.isInteger(value[k]?.nextRefreshSeconds)&&value[k].nextRefreshSeconds>=0)this.value[k].priceValidUntil=this.at+Math.max(0,value[k].nextRefreshSeconds*1000-2000);}
+    if(value?.ok){this.at=this.now();this.value=structuredClone(value);for(const k of ['fuel','co2']){if(!this.value[k])continue;const seconds=value[k]?.nextRefreshSeconds;this.value[k].priceValidUntil=this.at+(Number.isInteger(seconds)&&seconds>0?Math.max(1000,seconds*1000-2000):this.unreliableTimerRetryMs);}}
     return value;
   }
 }
