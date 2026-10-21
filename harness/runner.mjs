@@ -140,7 +140,7 @@ export class Runner {
     if (!reg) throw new Error('EXPLICIT_REGISTRATION_REQUIRED');
     report.startingState = this.batchSnapshot||await this.snapshot();
     if(this.batchSnapshot){await this.nav('plan');report.startingState={...this.batchSnapshot,maintenance:await this.dom('maintenance')};}
-    const eligibility = maintenanceEligibility(report.startingState, reg, kind, this.holds(reg));
+    const eligibility = maintenanceEligibility(report.startingState, reg, kind, this.holds(reg),{requireAction:false});
     report.gameResponse = { eligibility };
     if (!eligibility.eligible) { report.reason = 'NO_ELIGIBLE_AIRCRAFT'; report.endingState = report.startingState; return; }
     let quote = await this.dom('openPlanner', [{ registration: reg, kind, id: eligibility.row.id }]);

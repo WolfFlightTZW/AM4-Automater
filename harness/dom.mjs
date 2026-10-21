@@ -143,7 +143,18 @@ export function createDom(doc = document) {
   async function openPlanner({ registration, kind, id }) {
     const rows = [...doc.querySelectorAll('#maintAction .maint-list-sort')].filter(r => r.querySelector('[id^="controls"]')?.id === 'controls' + id && String(r.dataset.reg||'').toUpperCase() === registration.toUpperCase());
     if (rows.length !== 1) return { ok: false, reason: 'EXACT_MAINTENANCE_ROW_NOT_FOUND' };
-    const controls = [...rows[0].querySelectorAll('button,a')].filter(enabled).filter(e => { const h = handler(e); return h && !h.commit && h.id === id && h.kind === kind; });
+    const matching = [...rows[0].querySelectorAll('button,a')].filter(visible).filter(e => {
+      const h=handler(e);
+      if(h)return !h.commit&&h.id===id&&h.kind===kind;
+      // Disabled list buttons may have no onclick; the exact row and label identify them.
+      return !clean(e.getAttribute('onclick'))&&(e.disabled===true||e.getAttribute('aria-disabled')==='true')&&
+        (kind==='check'?/^A[- ]?check$/i:/^Repair$/i).test(clean(e.innerText));
+    });
+    const controls=matching.filter(enabled);
+    if(matching.length===1&&controls.length===0&&(matching[0].disabled===true||matching[0].getAttribute('aria-disabled')==='true')){
+      const row=maintenance().records.filter(r=>r.id===id&&r.registration.toUpperCase()===registration.toUpperCase());
+      if(row.length===1)return {ok:false,reason:'MAINTENANCE_CONTROL_DISABLED',registration,kind,id,unavailable:true,matchingRows:1,matchingControls:1,disabledControls:1,enabledControls:0,row:row[0],notAtBase:rows[0].dataset.base==='0'||/\bNot at base\b/i.test(clean(rows[0].innerText)),source:'MAINTENANCE_LIST'};
+    }
     if (controls.length !== 1) return { ok: false, reason: 'INDIVIDUAL_ACTION_NOT_AVAILABLE' };
     controls[0].click();
     await waitFor(() => visible(doc.querySelector(kind === 'repair' ? '#typeRepair' : '#typeCheck')));

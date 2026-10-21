@@ -1,6 +1,6 @@
 # AM4 Automater: implemented design
 
-Staged maintenance fallthrough: a uniquely identified, visible, explicitly disabled final maintenance control is definitive unavailability only before any submission or durable intent. That action is removed from the current batch's target-specific list observation before normal departure checks. Other due maintenance still has priority. Missing/ambiguous planner data, successful maintenance and uncertain submissions continue to hold that aircraft. The observation is discarded with the batch; no persistent maintenance state is added. This staging change requires a separately authorized deployment before production uses it.
+Maintenance-unavailable fallthrough: inspect the due A-check first when remaining hours are <=20; otherwise inspect Repair when wear exceeds 9%. An exact, visible, explicitly disabled action on the target maintenance-list row or detailed planner is definitive unavailability before submission. Not at base is recorded as context, never used alone as proof. Missing/ambiguous inspection or uncertain submission holds the target. A disabled priority action permits the existing departure path and all its safety checks. A-check unavailability does not switch to Repair. Target-specific unavailableActions are observations within the current batch only, discarded at the next Fleet assessment. Each arrival is reassessed; no next-base routing assumption, permanent hold or completion polling is added.
 
 Implemented architecture. Workspace paths in examples are illustrative.
 

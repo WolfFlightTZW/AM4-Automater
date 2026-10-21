@@ -10,8 +10,8 @@ import {createDom} from '../dom.mjs';
 import {Runner} from '../runner.mjs';
 import {Store} from '../store.mjs';
 import {readSource} from '../source.mjs';
-import {maintenanceChoice,departureEligibility,applyMaintenanceUnavailable} from '../policy.mjs';
-import {plannerDom} from './fake-dom.mjs';
+import {maintenanceChoice,requiredMaintenance,departureEligibility,applyMaintenanceUnavailable} from '../policy.mjs';
+import {Element,plannerDom} from './fake-dom.mjs';
 globalThis.getComputedStyle=()=>({visibility:'visible'});
 const root=new URL('../../',import.meta.url);
 const source=readSource(fileURLToPath(root));
@@ -26,11 +26,11 @@ function unavailable(s,kind='check'){
 const production=readFileSync(new URL('../production.mjs',import.meta.url),'utf8');
 async function productionBranch(s,result){
  let calls=0;
- const code=production.slice(production.indexOf('      let maintenanceBlocked=false;'),production.indexOf('      if(maintenanceBlocked)continue;'));
- const context={snapshot:s,a:s.fleet[0],maintenanceChoice,applyMaintenanceUnavailable,maintenanceCount:0,maxMaintenance:20,report:{held:[],maintenanceActions:[]},
+ const code=production.slice(production.indexOf('      const kind=requiredMaintenance('),production.indexOf('      const e=departureEligibility('));
+ const context={snapshot:s,a:s.fleet[0],maintenanceChoice,requiredMaintenance,applyMaintenanceUnavailable,maintenanceCount:0,maxMaintenance:20,report:{held:[],maintenanceActions:[]},
  runner:{holds:()=>[],performance:{counts:{skipped:0}},resources:{observeHeader(){},priceDue:()=>false,low:()=>false},dom:async()=>({})},
- action:async()=>{calls++;return result;},purchaseMarkets:async()=>{throw Error('UNEXPECTED_MARKET');}};
- const held=await vm.runInNewContext('(async()=>{'+code+';return maintenanceBlocked;})()',context);
+ action:async(scenario,reg)=>{calls++;return typeof result==='function'?result(scenario,reg):result;},purchaseMarkets:async()=>{throw Error('UNEXPECTED_MARKET');}};
+ const held=await vm.runInNewContext('(async()=>{for(const candidate of [0]){'+code+';return false;}return true;})()',context);
  return {held,calls};
 }
 for(const kind of ['check','repair'])test(kind+' explicitly unavailable -> stale list reconciled -> eligible departure',async()=>{
@@ -53,10 +53,10 @@ test('forged, mismatched, missing or ambiguous disabled evidence never suppresse
   const s=snapshot(),r=unavailable(s);change(r);assert.equal(applyMaintenanceUnavailable(s,'N-TEST001','check',r),false);assert.equal(maintenanceChoice(s,'N-TEST001'),'check');
  }
 });
-test('other due maintenance remains required after A-check unavailable',()=>{
+test('due but unavailable A-check falls through rather than choosing repair',()=>{
  const s=snapshot();s.fleet[0].wear=12;Object.assign(s.maintenance.records[0],{wear:12,availableActions:['check','repair']});
  assert.equal(applyMaintenanceUnavailable(s,'N-TEST001','check',unavailable(s)),true);
- assert.equal(maintenanceChoice(s,'N-TEST001'),'repair');assert.ok(departureEligibility(s,'N-TEST001',[],2).reasons.includes('MAINTENANCE_ACTION_AVAILABLE'));
+ assert.equal(maintenanceChoice(s,'N-TEST001'),null);assert.equal(requiredMaintenance(s,'N-TEST001'),null);assert.equal(departureEligibility(s,'N-TEST001',[],2).eligible,true);
 });
 test('detailed DOM only classifies exact visible disabled final controls as unavailable',()=>{
  for(const kind of ['check','repair']){
@@ -110,5 +110,59 @@ for(const kind of ['check','repair'])test(kind+' unavailable completes a simulat
   };
   const report=store.newCase('Departure','OFFLINE');await r.departure(report);
   assert.equal(submissions,1);assert.equal(report.result,'PASS');assert.equal(store.get(report.checkpoint).state,'DEPARTED_VERIFIED');
+ }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+function listPlanner(kind,disabled=true,atBase=false){
+ const p=plannerDom({kind});p.row.dataset.base=atBase?'1':'0';p.row.innerText=atBase?'At base':'Not at base';
+ const button=new Element({text:kind==='check'?'A-check':'Repair',disabled,attrs:disabled?{}:{onclick:`Ajax('maint_plan_do.php?type=${kind}&id=123','maintPlanActionDo')`}});
+ p.row.queries['button,a']=[button];return {...p,button};
+}
+test('Not at base disabled action is authoritative without clicking or confusing enabled Maintenance menu',async()=>{
+ for(const kind of ['check','repair']){
+  const p=listPlanner(kind);p.row.queries['button,a'].push(new Element({text:'Maintenance'}));
+  const q=await createDom(p.doc).openPlanner({registration:'N-TEST001',kind,id:'123'});
+  assert.equal(q.unavailable,true);assert.equal(q.notAtBase,true);assert.equal(q.source,'MAINTENANCE_LIST');assert.equal(p.button.clicks,0);
+ }
+});
+test('missing, hidden, duplicate or wrong-row list controls remain ambiguous even when Not at base',async()=>{
+ for(const mutate of [p=>p.row.queries['button,a']=[],p=>p.button.shown=false,p=>p.row.queries['button,a'].push(p.button),p=>p.row.dataset.reg='N-TEST002']){
+  const p=listPlanner('check');mutate(p);const q=await createDom(p.doc).openPlanner({registration:'N-TEST001',kind:'check',id:'123'});assert.notEqual(q.unavailable,true);
+ }
+});
+test('two away-airport legs reassess then one base A-check takes priority, with no lifecycle polling or duplicate submissions',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'am4-multiple-legs-')),store=new Store(dir);let departures=0,checks=0,flightReads=0,scheduleReads=0;
+ try{
+  for(const [index,airport]of ['TEST-AIRPORT-A','TEST-AIRPORT-B','TEST-BASE'].entries()){
+   const base=index===2,s=snapshot(),p=listPlanner('check',!base,base);s.fleet[0].airport=airport;
+   Object.assign(s.maintenance.records[0],{hoursToCheck:18-index*2,atBase:base,availableActions:base?['check']:['repair']});
+   Object.assign(p.row.dataset,{hours:String(18-index*2),wear:'2'});
+   p.section.innerText='Maintenance start Now Check time 00:05:00 Total cost $ 2400';
+   assert.equal(s.maintenance.records[0].unavailableActions,undefined,'fresh arrival cannot inherit unavailability');
+   assert.equal(requiredMaintenance(s,'N-TEST001'),'check');
+   const r=new Runner({scenario:'Production',productionRoot:dir,registration:'N-TEST001',maxActions:1,maxSeconds:60,live:true},source,store);
+   r.batchSnapshot=s;r.resources.value=structuredClone(s.markets);r.resources.observeHeader=()=>true;r.resources.low=()=>false;r.resources.debitReady=()=>true;r.resources.debit=()=>true;
+   r.holds=()=>[];r.pause=async()=>{};r.confirm=async()=>{};r.guard={check:async()=>{}};r.verifySource=()=>{};
+   const navigation=[];r.nav=async view=>navigation.push(view);
+   r.evaluate=async(expression,label)=>{if(label==='source.departJs')departures++;return {ok:true};};
+   r.dom=async(method,args)=>{
+    if(method==='inventory')return {};
+    if(method==='maintenance')return s.maintenance;
+    if(method==='openPlanner')return createDom(p.doc).openPlanner(args[0]);
+    if(method==='inspectPlanner')return createDom(p.doc).inspectPlanner(...args);
+    if(method==='commit'){checks++;return {clicked:true,cashBefore:250000000};}
+    if(method==='response')return {text:'Synthetic scheduling acknowledgement'};
+    if(method==='schedule'){scheduleReads++;return {complete:true,entries:[{aircraftId:'123',registration:'N-TEST001',kind:'check'}]};}
+    if(method==='flight'){flightReads++;return {aircraftId:'123',registrations:['N-TEST001'],hours:2,fuelRequired:1000,header:{}};}
+    if(method==='receipt')return {};
+    if(method==='departureObservation')return {rows:[{...s.fleet[0],status:'inflight',location:'inflightList'}]};
+    throw Error('UNEXPECTED_UI_'+method);
+   };
+   const b=await productionBranch(s,scenario=>r.execute(scenario));assert.equal(b.calls,1);
+   if(!base){assert.equal(b.held,false);const result=await r.execute('Departure');assert.equal(result.result,'PASS');assert.deepEqual(navigation,['plan']);}
+   else{assert.equal(b.held,true);assert.deepEqual(navigation,['plan','schedule']);}
+  }
+  assert.equal(departures,2);assert.equal(checks,1);assert.equal(flightReads,4);assert.equal(scheduleReads,1);
+  const actions=store.db.prepare('select kind,state from actions').all();assert.equal(actions.length,3);assert.equal(actions.filter(a=>a.kind==='check'&&a.state==='SCHEDULED_VERIFIED').length,1);
  }finally{store.close();rmSync(dir,{recursive:true,force:true});}
 });

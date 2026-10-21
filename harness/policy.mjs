@@ -32,9 +32,16 @@ export function maintenanceEligibility(snapshot, registration, kind, holds = [],
   return { eligible: reasons.length === 0, reasons, aircraft, row };
 }
 export function maintenanceChoice(snapshot,registration,holds=[]){
-  if(maintenanceEligibility(snapshot,registration,'check',holds).eligible)return 'check';
-  if(maintenanceEligibility(snapshot,registration,'repair',holds).eligible)return 'repair';
-  return null;
+  const kind=requiredMaintenance(snapshot,registration,holds);
+  return kind&&maintenanceEligibility(snapshot,registration,kind,holds).eligible?kind:null;
+}
+export function requiredMaintenance(snapshot,registration,holds=[]){
+  const {row}=identityRows(snapshot,registration);
+  if(!Number.isFinite(row?.hoursToCheck))return null;
+  // A-check due takes priority; unavailable A-check falls through to departure, not repair.
+  const kind=row.hoursToCheck<=20?'check':'repair';
+  if(row.unavailableActions?.includes(kind))return null;
+  return maintenanceEligibility(snapshot,registration,kind,holds,{requireAction:false}).eligible?kind:null;
 }
 // Apply only target-specific, pre-submission disabled-control evidence to this batch's list.
 // A fresh snapshot restores authoritative list data; nothing is persisted or retried here.
@@ -45,7 +52,8 @@ export function applyMaintenanceUnavailable(snapshot,registration,kind,report){
      q?.ok!==false||q.reason!=='MAINTENANCE_CONTROL_DISABLED'||q.unavailable!==true||q.id!==id||q.kind!==kind||q.registration!==registration||
      q.matchingRows!==1||q.matchingControls!==1||q.disabledControls!==1||q.enabledControls!==0||rows.length!==1||
      q.row?.id!==id||q.row?.registration!==registration||!Array.isArray(q.row.availableActions)||![q.row.wear,q.row.hoursToCheck].every(n=>Number.isFinite(n)&&n>=0))return false;
-  Object.assign(rows[0],q.row,{availableActions:q.row.availableActions.filter(action=>action!==kind)});
+  const unavailableActions=[...new Set([...(rows[0].unavailableActions||[]),kind])];
+  Object.assign(rows[0],q.row,{unavailableActions,availableActions:q.row.availableActions.filter(action=>!unavailableActions.includes(action))});
   return true;
 }
 export function departureEligibility(snapshot, registration, holds = [], flightHours = null) {
