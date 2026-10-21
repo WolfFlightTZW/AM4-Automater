@@ -145,7 +145,7 @@ export class Runner {
     if (!eligibility.eligible) { report.reason = 'NO_ELIGIBLE_AIRCRAFT'; report.endingState = report.startingState; return; }
     let quote = await this.dom('openPlanner', [{ registration: reg, kind, id: eligibility.row.id }]);
     report.gameResponse.quote = quote;
-    if(quote.ok===false&&quote.reason==='MAINTENANCE_CONTROL_DISABLED'&&quote.unavailable===true){
+    if(quote.ok===false&&['MAINTENANCE_CONTROL_DISABLED','MAINTENANCE_BASE_UNAVAILABLE'].includes(quote.reason)&&quote.unavailable===true){
       report.reason='MAINTENANCE_UNAVAILABLE';report.endingState={quote};return;
     }
     if (!quote.ok || !eligibility.row.availableActions.includes(kind)) throw new Error('PLANNER_NOT_ELIGIBLE');

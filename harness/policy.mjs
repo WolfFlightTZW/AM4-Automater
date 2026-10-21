@@ -48,10 +48,12 @@ export function requiredMaintenance(snapshot,registration,holds=[]){
 export function applyMaintenanceUnavailable(snapshot,registration,kind,report){
   const q=report?.gameResponse?.quote;
   const {id,rows}=identityRows(snapshot,registration);
+  const disabled=q?.reason==='MAINTENANCE_CONTROL_DISABLED'&&q.matchingControls===1&&q.disabledControls===1;
+  const baseUnavailable=q?.reason==='MAINTENANCE_BASE_UNAVAILABLE'&&q.matchingControls===0&&q.disabledControls===0&&q.targetBound===true&&q.row?.atBase===false&&q.restriction==='NOT_AT_OR_INBOUND_TO_BASE';
   if(report?.reason!=='MAINTENANCE_UNAVAILABLE'||report.checkpoint||report.actionAttempted?.submitted!==false||
-     q?.ok!==false||q.reason!=='MAINTENANCE_CONTROL_DISABLED'||q.unavailable!==true||q.id!==id||q.kind!==kind||q.registration!==registration||
-     q.matchingRows!==1||q.matchingControls!==1||q.disabledControls!==1||q.enabledControls!==0||rows.length!==1||
-     q.row?.id!==id||q.row?.registration!==registration||!Array.isArray(q.row.availableActions)||![q.row.wear,q.row.hoursToCheck].every(n=>Number.isFinite(n)&&n>=0))return false;
+     q?.ok!==false||(!disabled&&!baseUnavailable)||q.unavailable!==true||q.id!==id||q.kind!==kind||q.registration!==registration||
+     q.matchingRows!==1||q.enabledControls!==0||rows.length!==1||
+     q.row?.id!==id||String(q.row?.registration).toUpperCase()!==registration.toUpperCase()||!Array.isArray(q.row.availableActions)||![q.row.wear,q.row.hoursToCheck].every(n=>Number.isFinite(n)&&n>=0))return false;
   const unavailableActions=[...new Set([...(rows[0].unavailableActions||[]),kind])];
   Object.assign(rows[0],q.row,{unavailableActions,availableActions:q.row.availableActions.filter(action=>!unavailableActions.includes(action))});
   return true;

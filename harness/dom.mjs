@@ -123,7 +123,7 @@ export function createDom(doc = document) {
     return {ok:true,screen:'FLEET'};
   }
   function rootContent(){return doc.querySelector('#maintAction')?.innerHTML;}
-  function inspectPlanner(registration, kind, id) {
+  function inspectPlanner(registration, kind, id, openedForTarget=false) {
     const section = doc.querySelector(kind === 'repair' ? '#typeRepair' : '#typeCheck');
     if (!visible(section)) return { ok: false, reason: 'PLANNER_SECTION_MISSING' };
     const text = clean(section.innerText), costMatch = text.match(/Total cost\s*\$\s*([\d,]+)/i);
@@ -135,9 +135,12 @@ export function createDom(doc = document) {
     const startNow = /(?:Repair start|Maintenance start)\s+Now\b/i.test(text);
     const cost = costMatch ? number(costMatch[1]) : null;
     const time = text.match(/(?:Repair|Check) time\s+(\d{2,3}:\d{2}:\d{2})/i)?.[1] || null;
+    const baseRestriction=[...section.querySelectorAll('.alert')].filter(visible).some(e=>/^Aircraft is not at a base or inbound to a base$/i.test(clean(e.innerText)));
+    if(openedForTarget&&rows.length===1&&rows[0].atBase===false&&matching.length===0&&baseRestriction)
+      return {ok:false,reason:'MAINTENANCE_BASE_UNAVAILABLE',registration,kind,id,unavailable:true,matchingRows:1,matchingControls:0,disabledControls:0,enabledControls:0,row:rows[0],notAtBase:true,targetBound:true,restriction:'NOT_AT_OR_INBOUND_TO_BASE',source:'FRESH_TARGET_PLANNER'};
     if(rows.length===1&&matching.length===1&&buttons.length===0&&(matching[0].disabled===true||matching[0].getAttribute('aria-disabled')==='true'))
       return {ok:false,reason:'MAINTENANCE_CONTROL_DISABLED',registration,kind,id,unavailable:true,matchingRows:1,matchingControls:1,disabledControls:1,enabledControls:0,cost,time,startNow,row:rows[0]};
-    const ok = rows.length === 1 && buttons.length === 1 && startNow && Number.isSafeInteger(cost) && cost >= 0;
+    const ok = rows.length === 1 && buttons.length === 1 && !baseRestriction && startNow && Number.isSafeInteger(cost) && cost >= 0;
     return { ok, reason: ok ? 'EXACT_ID_TYPE_QUOTE_AND_CONTROL' : 'PLANNER_AMBIGUOUS_OR_NOT_AVAILABLE', registration, kind, id, cost, time, startNow, row: rows[0] || null, finalControls: buttons.length, evidence: text.slice(0, 2000) };
   }
   async function openPlanner({ registration, kind, id }) {
@@ -156,9 +159,10 @@ export function createDom(doc = document) {
       if(row.length===1)return {ok:false,reason:'MAINTENANCE_CONTROL_DISABLED',registration,kind,id,unavailable:true,matchingRows:1,matchingControls:1,disabledControls:1,enabledControls:0,row:row[0],notAtBase:rows[0].dataset.base==='0'||/\bNot at base\b/i.test(clean(rows[0].innerText)),source:'MAINTENANCE_LIST'};
     }
     if (controls.length !== 1) return { ok: false, reason: 'INDIVIDUAL_ACTION_NOT_AVAILABLE' };
+    const selector=kind==='repair'?'#typeRepair':'#typeCheck',oldSection=doc.querySelector(selector);
     controls[0].click();
-    await waitFor(() => visible(doc.querySelector(kind === 'repair' ? '#typeRepair' : '#typeCheck')));
-    return inspectPlanner(registration, kind, id);
+    await waitFor(() => doc.querySelector(selector)!==oldSection&&visible(doc.querySelector(selector)));
+    return inspectPlanner(registration, kind, id,true);
   }
   function cash() { const m = clean(doc.body?.innerText).match(/\bACCOUNT\s*\$\s*([\d,]+)/i); return m ? number(m[1]) : null; }
   function commit({ registration, kind, id, quote, actionId, excludedAircraftIds=[] }) {

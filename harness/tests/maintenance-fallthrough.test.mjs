@@ -116,6 +116,7 @@ for(const kind of ['check','repair'])test(kind+' unavailable completes a simulat
 function listPlanner(kind,disabled=true,atBase=false){
  const p=plannerDom({kind});p.row.dataset.base=atBase?'1':'0';p.row.innerText=atBase?'At base':'Not at base';
  const button=new Element({text:kind==='check'?'A-check':'Repair',disabled,attrs:disabled?{}:{onclick:`Ajax('maint_plan_do.php?type=${kind}&id=123','maintPlanActionDo')`}});
+ button.onClick=()=>{p.doc.queries[kind==='check'?'#typeCheck':'#typeRepair']=[new Element({text:p.section.innerText,queries:p.section.queries})];};
  p.row.queries['button,a']=[button];return {...p,button};
 }
 test('Not at base disabled action is authoritative without clicking or confusing enabled Maintenance menu',async()=>{
@@ -138,6 +139,11 @@ test('two away-airport legs reassess then one base A-check takes priority, with 
    Object.assign(s.maintenance.records[0],{hoursToCheck:18-index*2,atBase:base,availableActions:base?['check']:['repair']});
    Object.assign(p.row.dataset,{hours:String(18-index*2),wear:'2'});
    p.section.innerText='Maintenance start Now Check time 00:05:00 Total cost $ 2400';
+   if(index===0){
+    p.row.dataset.reg='n-test001';p.button.disabled=false;p.button.attrs.onclick="Ajax('maint_plan_do.php?type=check&id=123','maintPlanActionDo')";
+    p.section.queries['button,a,input[type="submit"]']=[];
+    p.section.queries['.alert']=[new Element({text:'Aircraft is not at a base or inbound to a base'})];
+   }
    assert.equal(s.maintenance.records[0].unavailableActions,undefined,'fresh arrival cannot inherit unavailability');
    assert.equal(requiredMaintenance(s,'N-TEST001'),'check');
    const r=new Runner({scenario:'Production',productionRoot:dir,registration:'N-TEST001',maxActions:1,maxSeconds:60,live:true},source,store);
@@ -165,4 +171,15 @@ test('two away-airport legs reassess then one base A-check takes priority, with 
   assert.equal(departures,2);assert.equal(checks,1);assert.equal(flightReads,4);assert.equal(scheduleReads,1);
   const actions=store.db.prepare('select kind,state from actions').all();assert.equal(actions.length,3);assert.equal(actions.filter(a=>a.kind==='check'&&a.state==='SCHEDULED_VERIFIED').length,1);
  }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+});
+test('base restriction requires exact text, no final control and fresh target binding',()=>{
+ const p=plannerDom({kind:'check'});p.row.dataset.base='0';p.section.queries['button,a,input[type="submit"]']=[];
+ p.section.queries['.alert']=[new Element({text:'Aircraft is not at a base or inbound to a base'})];
+ const d=createDom(p.doc);
+ assert.equal(d.inspectPlanner('N-TEST001','check','123').unavailable,undefined,'stale or unbound section cannot authorize fallthrough');
+ const q=d.inspectPlanner('N-TEST001','check','123',true);assert.equal(q.reason,'MAINTENANCE_BASE_UNAVAILABLE');
+ const s=snapshot();assert.equal(applyMaintenanceUnavailable(s,'N-TEST001','check',{reason:'MAINTENANCE_UNAVAILABLE',actionAttempted:{submitted:false},gameResponse:{quote:q}}),true);
+ p.section.queries['.alert'][0].shown=false;assert.notEqual(d.inspectPlanner('N-TEST001','check','123',true).unavailable,true);
+ p.section.queries['.alert'][0].shown=true;p.section.queries['button,a,input[type="submit"]']=[p.final];
+ assert.equal(d.inspectPlanner('N-TEST001','check','123',true).ok,false,'contradictory enabled control and base warning stays held');
 });
