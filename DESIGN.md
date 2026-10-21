@@ -1,5 +1,7 @@
 # AM4 Automater: implemented design
 
+Staged maintenance fallthrough: a uniquely identified, visible, explicitly disabled final maintenance control is definitive unavailability only before any submission or durable intent. That action is removed from the current batch's target-specific list observation before normal departure checks. Other due maintenance still has priority. Missing/ambiguous planner data, successful maintenance and uncertain submissions continue to hold that aircraft. The observation is discarded with the batch; no persistent maintenance state is added. This staging change requires a separately authorized deployment before production uses it.
+
 Implemented architecture. Workspace paths in examples are illustrative.
 
 ## Authority and scope

@@ -127,13 +127,16 @@ export function createDom(doc = document) {
     const section = doc.querySelector(kind === 'repair' ? '#typeRepair' : '#typeCheck');
     if (!visible(section)) return { ok: false, reason: 'PLANNER_SECTION_MISSING' };
     const text = clean(section.innerText), costMatch = text.match(/Total cost\s*\$\s*([\d,]+)/i);
-    const buttons = [...section.querySelectorAll('button,a,input[type="submit"]')].filter(enabled).filter(e => {
+    const matching = [...section.querySelectorAll('button,a,input[type="submit"]')].filter(visible).filter(e => {
       const h = handler(e); return h && h.commit && h.kind === kind && h.id === id;
     });
+    const buttons = matching.filter(enabled);
     const rows = maintenance().records.filter(r => r.id === id && r.registration.toUpperCase() === registration.toUpperCase());
     const startNow = /(?:Repair start|Maintenance start)\s+Now\b/i.test(text);
     const cost = costMatch ? number(costMatch[1]) : null;
     const time = text.match(/(?:Repair|Check) time\s+(\d{2,3}:\d{2}:\d{2})/i)?.[1] || null;
+    if(rows.length===1&&matching.length===1&&buttons.length===0&&(matching[0].disabled===true||matching[0].getAttribute('aria-disabled')==='true'))
+      return {ok:false,reason:'MAINTENANCE_CONTROL_DISABLED',registration,kind,id,unavailable:true,matchingRows:1,matchingControls:1,disabledControls:1,enabledControls:0,cost,time,startNow,row:rows[0]};
     const ok = rows.length === 1 && buttons.length === 1 && startNow && Number.isSafeInteger(cost) && cost >= 0;
     return { ok, reason: ok ? 'EXACT_ID_TYPE_QUOTE_AND_CONTROL' : 'PLANNER_AMBIGUOUS_OR_NOT_AVAILABLE', registration, kind, id, cost, time, startNow, row: rows[0] || null, finalControls: buttons.length, evidence: text.slice(0, 2000) };
   }

@@ -8,7 +8,7 @@ import { Store } from './store.mjs';
 import { readSource } from './source.mjs';
 import { acquireGuard } from './guard.mjs';
 import { Cdp } from './cdp.mjs';
-import { maintenanceChoice,departureEligibility,reconcileRecovery } from './policy.mjs';
+import { maintenanceChoice,departureEligibility,reconcileRecovery,applyMaintenanceUnavailable } from './policy.mjs';
 import { highCycleReport } from './fleet-report.mjs';
 import { OperatorSession } from '../operator/control.mjs';
 import { purchaseDecision,reconcilePurchase } from './purchasing.mjs';
@@ -126,15 +126,20 @@ try{
       runner.performance.counts.examined++;
       if(runner.resources.priceDue()||runner.resources.low())await purchaseMarkets('PRICE_OR_INVENTORY_REFRESH');
       snapshot.markets=await runner.markets();
-      const kind=maintenanceChoice(snapshot,a.registration,runner.holds(a.registration));
-      if(kind){
-        if(maintenanceCount>=maxMaintenance){report.held.push({registration:a.registration,reasons:['MAINTENANCE_DEFERRED_BATCH_BUDGET']});runner.performance.counts.skipped++;continue;}
+      let maintenanceBlocked=false;
+      // At most one inspection of each maintenance kind; never retry a failed submission.
+      for(let inspection=0;inspection<2;inspection++){
+        const kind=maintenanceChoice(snapshot,a.registration,runner.holds(a.registration));
+        if(!kind)break;
+        if(maintenanceCount>=maxMaintenance){report.held.push({registration:a.registration,reasons:['MAINTENANCE_DEFERRED_BATCH_BUDGET']});runner.performance.counts.skipped++;maintenanceBlocked=true;break;}
         const r=await action(kind==='check'?'ACheck':'Repair',a.registration);maintenanceCount++;
         report.maintenanceActions.push({registration:a.registration,kind,result:r.result,reason:r.reason,checkpoint:r.checkpoint});
         runner.resources.observeHeader(await runner.dom('inventory'));
         if(runner.resources.priceDue()||runner.resources.low())await purchaseMarkets('AFTER_MAINTENANCE_REFRESH');
-        continue;
+        if(applyMaintenanceUnavailable(snapshot,a.registration,kind,r))continue;
+        maintenanceBlocked=true;break;
       }
+      if(maintenanceBlocked)continue;
       const e=departureEligibility(snapshot,a.registration,runner.holds(a.registration),null);
       if(e.reasons.some(reason=>reason!=='FLIGHT_DURATION_UNKNOWN')){runner.performance.counts.skipped++;report.held.push({registration:a.registration,reasons:e.reasons});continue;}
       runner.performance.counts.attempted++;

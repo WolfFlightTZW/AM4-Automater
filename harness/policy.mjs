@@ -36,6 +36,18 @@ export function maintenanceChoice(snapshot,registration,holds=[]){
   if(maintenanceEligibility(snapshot,registration,'repair',holds).eligible)return 'repair';
   return null;
 }
+// Apply only target-specific, pre-submission disabled-control evidence to this batch's list.
+// A fresh snapshot restores authoritative list data; nothing is persisted or retried here.
+export function applyMaintenanceUnavailable(snapshot,registration,kind,report){
+  const q=report?.gameResponse?.quote;
+  const {id,rows}=identityRows(snapshot,registration);
+  if(report?.reason!=='MAINTENANCE_UNAVAILABLE'||report.checkpoint||report.actionAttempted?.submitted!==false||
+     q?.ok!==false||q.reason!=='MAINTENANCE_CONTROL_DISABLED'||q.unavailable!==true||q.id!==id||q.kind!==kind||q.registration!==registration||
+     q.matchingRows!==1||q.matchingControls!==1||q.disabledControls!==1||q.enabledControls!==0||rows.length!==1||
+     q.row?.id!==id||q.row?.registration!==registration||!Array.isArray(q.row.availableActions)||![q.row.wear,q.row.hoursToCheck].every(n=>Number.isFinite(n)&&n>=0))return false;
+  Object.assign(rows[0],q.row,{availableActions:q.row.availableActions.filter(action=>action!==kind)});
+  return true;
+}
 export function departureEligibility(snapshot, registration, holds = [], flightHours = null) {
   // An unavailable maintenance action never grounds a return flight.
   const e = maintenanceEligibility(snapshot, registration, 'repair', holds, {requireAction:false});
