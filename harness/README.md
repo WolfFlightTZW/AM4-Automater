@@ -12,7 +12,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\harness\Run-AM4Tests.ps1
 
 # All maintained regression suites, including recovery, reporting and operator controls.
 $env:AM4_SOURCE_ROOT = 'H:\AM4 automate'
-node --test harness/tests/offline.test.mjs harness/tests/purchasing.test.mjs harness/tests/fleet-report.test.mjs harness/tests/recovery.test.mjs harness/tests/layout.test.mjs harness/tests/privacy.test.mjs harness/tests/production.test.mjs harness/tests/fleet-heartbeat.test.mjs harness/tests/batch.test.mjs operator/control.test.mjs operator/process-diagnostics.test.mjs
+node --test harness/tests/*.test.mjs operator/control.test.mjs operator/process-diagnostics.test.mjs
 ```
 
 `-Scenario SelfTest` omits the named production-contract checks. `-Scenario Inventory` lists source adapter inventory. Offline fixtures are synthetic/saved data, not current AM4. Test output databases are isolated; do not point offline output at the active recovery directory.

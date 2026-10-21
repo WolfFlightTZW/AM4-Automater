@@ -20,6 +20,7 @@ Node.js 24+ supplies WebSocket, SQLite and node:test. No npm dependencies or add
 | `resource-cache.mjs` | Countdown-bound prices and receipt-accounted session inventory; invalidation, no durable balance ledger |
 | `settings.mjs`, `production-settings.json` | Validated central cadence/cache/backoff settings |
 | `cadence.mjs` | Awaited inter-pass wait with frequent ownership checks and recovery backoff |
+| `fleet-activity.mjs` | Session-only waiting/resumed transitions from existing observations; unknown eligibility never proves waiting |
 | `fleet-heartbeat.mjs` | Session-only verified-departure counter and interruptible Fleet display between actions |
 | `fleet-report.mjs` | Incremental informational CSV and coverage sidecar |
 | `main.mjs`, `Run-AM4Tests.ps1` | Offline/read-only defaults; named TESTING scenarios |
@@ -40,13 +41,13 @@ Current production/harness entrypoints require an existing migration-validated l
 
 A failed UI read grants no eligibility. An uncertain send retains its intent and funds reservation. Schedule absence alone never means a submission failed. Complete current schedule, stable aircraft ID and restored target condition can establish RESOLVED_CURRENT_UI, distinct from proving the historical transaction completed.
 
-Fresh quotes and actual controls are bound immediately before irreversible work. The operator lease covers CDP execution; stale/expired workers cannot click. A disconnect or ownership loss invalidates resource observations and stops production. A remaining per-aircraft uncertainty blocks that target while unrelated operations remain eligible; inter-pass cadence backs off.
+Fresh quotes and actual controls are bound immediately before irreversible work. The operator lease covers CDP execution; stale/expired workers cannot click. A disconnect or ownership loss invalidates resource observations and stops production. An isolated numeric-ID-bound maintenance uncertainty with a known nonnegative reserved cost blocks its target and reserves spending without fleet-wide backoff. Other unresolved actions, malformed identity/cost evidence or incomplete inspection while uncertainty remains trigger recovery backoff; legacy resource holds also trigger it.
 
 ## Observation reuse
 
-Standalone tests retain the short observation TTL. Production keeps session-local working inventory from version-bound single-flight receipts, with fuel-header and CO2-gauge consistency checks. Prices expire at the observed countdown deadline; missing countdowns use the short TTL. Low stock, inconsistent headers, unknown outcomes, disconnect and close invalidate inventory and force real UI reads. Purchases still force fresh quotes and verification. One shared fleet observation serves a rotating twenty-candidate batch; departure completion reads only its target. See DESIGN.md for exact cache and purchase-check cadence.
+Standalone tests retain the short observation TTL. Production keeps session-local working inventory from version-bound single-flight receipts, with fuel-header and CO2-gauge consistency checks. Positive price countdowns expire two seconds early with a one-second minimum; zero, missing or invalid countdowns use a bounded 60-second retry. Low stock, inconsistent headers, unknown outcomes, disconnect and close invalidate inventory and force real UI reads. Purchases still force fresh quotes and verification. One shared fleet observation serves a rotating twenty-candidate batch; departure completion reads only its target. See DESIGN.md for exact cache and purchase-check cadence.
 
-The ten-dispatch-only strategy is deliberately not active: route consumption is not yet proven sufficiently to retain that observation safely. Early invalidation after every dispatch is currently required.
+Production retains inventory only after a version/epoch-bound single-flight receipt matches the fuel delta and CO2 gauge. It invalidates on missing or inconsistent proof; there is no fixed ten-dispatch refresh strategy or unconditional invalidation after every verified departure. Invalid market countdowns use a bounded 60-second retry. Standalone callers retain the configured short observation TTL.
 
 ## Validation and archive boundaries
 
@@ -70,7 +71,7 @@ Historical scripts and task-scoped development sessions under `archive/` are not
 
 New installations initialize their own empty recovery/control state using `init-runtime.mjs`. Existing installations cannot use that command to reset state. No AM4-managed state is seeded from committed fixtures. Collection-default changes are loaded at normal startup; do not restart a running controller solely to install documentation/privacy changes.
 
-Known adapter constraint: maintenance schedule text parsing currently recognizes N-prefixed registrations. Synthetic schedule fixtures therefore use N-TEST identities. Other naming conventions need a separate adapter validation; unrecognized schedule rows remain inconclusive. N-145 remains an intentional configured exclusion, not a remembered fleet observation.
+Known adapter constraint: unlinked schedule-table text fallback recognizes N-prefixed registrations; calendar labels and ID-linked table rows accept arbitrary full display names. Unrecognized or ambiguous rows remain inconclusive. N-145 remains an intentional configured exclusion, not a remembered fleet observation.
 
 Concurrency uses current process and TCP-owner evidence rather than counts of unreadable shells. The existing ownership and mutex are unchanged. Known AM4 PowerShell/Node entrypoints and foreign active loopback CDP clients block; opaque sessions without AM4 evidence are diagnostic warnings. Incomplete process or network inspection fails closed. The initial inventory is repeated after acquiring the mutex and before submissions. No attestation files are read or written; previously collected approvals remain local and untouched. Command lines stay in memory; safe identities and limitations appear in the requested latest status/diagnostic report only.
 
