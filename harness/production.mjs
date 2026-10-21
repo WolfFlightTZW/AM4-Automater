@@ -17,6 +17,7 @@ import { waitBetweenPasses } from './cadence.mjs';
 import {PassPerformance,requiresRecoveryBackoff,defaultMaxDepartures} from './performance.mjs';
 import {identityRows} from './identity.mjs';
 import {FleetHeartbeat} from './fleet-heartbeat.mjs';
+import {FleetActivity,assessFleetActivity} from './fleet-activity.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url))),args=process.argv.slice(2),config={};
 for(let i=0;i<args.length;i+=2){if(!/^--[a-z-]+$/.test(args[i])||args[i+1]===undefined)throw new Error('INVALID_PRODUCTION_ARGUMENT');config[args[i].slice(2)]=Number(args[i+1]);}
 const cycle=config['cycle-seconds']??settings.cycleSeconds,maxDepartures=config['max-departures']??defaultMaxDepartures,maxMaintenance=config['max-maintenance']??20,csvBatch=config['csv-batch']??10,maxPasses=config['max-passes']??0,passSeconds=config['pass-seconds']??600;
@@ -30,6 +31,8 @@ const runner=new Runner({scenario:'Production',live:true,maxSeconds:passSeconds,
 let report,completedPasses=0,batchCursor=0;
 runner.resources.batch=true;
 const fleetHeartbeat=new FleetHeartbeat();
+const fleetActivity=new FleetActivity();
+function logFleetActivity(assessment,options){const event=fleetActivity.observe(assessment,options);if(event)console.log(JSON.stringify(event));}
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function active(){runner.operator.assertCanCommit();if(runner.cdp.socket.readyState!==WebSocket.OPEN)throw new Error('CDP_DISCONNECTED');}
 function stage(name){active();runner.deadline=Date.now()+120000;report.phase=name;save(report);}
@@ -42,6 +45,7 @@ async function action(scenario,registration){
   report.actions.push({scenario,registration,id:r.id,checkpoint:r.checkpoint,result:r.result,reason:r.reason,submitted:r.actionAttempted?.submitted,inventoryAccounted:r.gameResponse?.inventoryAccounted,inventoryIssue:runner.resources.lastIssue});
   if(r.checkpoint){const a=store.get(r.checkpoint);report.actions.at(-1).state=a.state;}
   report.activeAction=null;save(report);active();
+  if(['Departure','Repair','ACheck'].includes(scenario)&&r.result==='PASS')logFleetActivity({actionableAircraft:1,unknown:1});
   if(/^(?:OPERATOR_|CDP_|CONTROLLER_|BROWSER_AUTOMATION_|PRODUCTION_SOURCE_CHANGED)/.test(r.reason))throw Object.assign(new Error(r.reason),{processDiagnostics:r.processDiagnostics});
   return r;
 }
@@ -110,6 +114,8 @@ try{
       }
       // Unknown purchase outcomes retain only that resource's durable hold.
     }
+    const fleetAssessment=assessFleetActivity(snapshot,reg=>runner.holds(reg));
+    if(fleetAssessment.actionableAircraft>0)logFleetActivity(fleetAssessment);
     save(report);stage('FLEET_BATCH');let maintenanceCount=0;
     const pool=snapshot.fleet.filter(a=>['landedList','parkedList'].includes(a.location));
     const offset=pool.length?batchCursor%pool.length:0;
@@ -158,6 +164,7 @@ try{
     // Serialized passes: an unresolved transaction backs off rather than tight-looping.
     const waitingForRecovery=requiresRecoveryBackoff(store.unresolved(),{scheduleComplete:snapshot.schedule?.complete===true,maintenanceComplete:snapshot.maintenance?.ok===true})||runner.holds('fuel').length>0||runner.holds('co2').length>0;
     if(waitingForRecovery)runner.resources.invalidate();
+    if(!waitingForRecovery&&!report.batch.recoveryBreak)logFleetActivity(assessFleetActivity({...snapshot,markets:runner.resources.value},reg=>runner.holds(reg)),{nextFleetCheckAt:new Date(Date.now()+cycle*1000).toISOString()});
     Object.assign(report,await waitBetweenPasses({active,recovery:waitingForRecovery,seconds:cycle}));save(report);
     store.event('PASS_TIMING',{passId:report.passId,durationMs:report.durationMs,idleMs:report.idleMs,idleReason:report.idleReason});
   }
