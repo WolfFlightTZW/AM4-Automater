@@ -9,7 +9,7 @@ import {acquireGuard} from './guard.mjs';
 import {Cdp} from './cdp.mjs';
 import {readSource} from './source.mjs';
 import {domExpression} from './dom.mjs';
-import {alaskaStamp,validateFleet,publishSnapshot,detailsExpression} from './fleet-snapshot.mjs';
+import {alaskaStamp,validateFleet,publishSnapshot,publishIncompleteSnapshot,detailsExpression} from './fleet-snapshot.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export function restorationAllowed(initial,current,revision){return initial.mode==='AUTOMATIC'&&current.mode==='TESTING'&&current.revision===revision&&!current.owner&&!current.action&&current.quarantineUntil<=Date.now();}
 const safeView=s=>({mode:s.mode,revision:s.revision,owner:s.owner?{pid:s.owner.pid,role:s.owner.role,heartbeat:s.owner.heartbeat}:null,activeAction:s.activeAction,action:s.action,uncertainty:s.uncertainty,safeToUseGame:s.safeToUseGame,display:s.display});
@@ -49,6 +49,7 @@ export async function runSnapshot(root=fileURLToPath(new URL('../',import.meta.u
     const key=a=>a.aircraftId+':'+a.registration;
     report.membershipChanged=JSON.stringify(report.fleet.map(key).sort())!==JSON.stringify(finalFleet.map(key).sort());
     report.finalFleetCount=finalFleet.length;report.finished=new Date().toISOString();
+    if(report.errors.length||report.membershipChanged){report.incompleteExport=publishIncompleteSnapshot(directory,stem,report);throw Error('SNAPSHOT_INCOMPLETE');}
     result=publishSnapshot(directory,stem,report);report.complete=true;report.export=result;
     console.log(JSON.stringify({event:'SNAPSHOT_COMPLETE',...result}));
   }catch(error){failure=error;report.errors.push({reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'SNAPSHOT_OPERATION_FAILED'});}

@@ -58,6 +58,22 @@ export function publishSnapshot(directory,stem,report){
   return {path:destination,rawPath,count:table.rows.length,columns:table.columns,unavailableFields:table.unavailableFields,fieldCoverage:table.fieldCoverage};
 }
 
+export function publishIncompleteSnapshot(directory,stem,report){
+  // Explicitly incomplete, but retain one row for every enumerated aircraft; never invent Details.
+  validateFleet(report.fleet);
+  const capturedIds=new Set(report.records.map(r=>r.aircraftId));
+  const capturedFleet=report.fleet.filter(a=>capturedIds.has(a.aircraftId));
+  const table=capturedFleet.length?snapshotTable(capturedFleet,report.records,report.started):{rows:[],columns:['snapshotTimestamp','registration','aircraftId','status','location','grounded']};
+  const byId=new Map(table.rows.map(r=>[r.aircraftId,r]));
+  const columns=['snapshotComplete','detailsInspection','inspectionError',...table.columns];
+  const rows=report.fleet.map(a=>({snapshotComplete:'false',detailsInspection:byId.has(a.aircraftId)?'CAPTURED':'UNAVAILABLE',inspectionError:report.errors?.filter(e=>e.aircraftId===a.aircraftId).map(e=>e.reason).join('; ')||'',snapshotTimestamp:report.started,registration:a.registration,aircraftId:a.aircraftId,status:a.status,location:a.location,grounded:a.grounded,...byId.get(a.aircraftId)}));
+  const csv=csvEncode(columns,rows),decoded=csvDecode(csv);
+  if(decoded.length!==report.fleet.length+1||decoded.some(r=>r.length!==columns.length))throw Error('CSV_INTEGRITY_FAILURE');
+  const path=join(directory,stem+'.INCOMPLETE.csv');if(existsSync(path))throw Error('SNAPSHOT_ALREADY_EXISTS');
+  writeFileSync(path+'.tmp',csv,{flag:'wx'});renameSync(path+'.tmp',path);
+  return {path,count:rows.length,detailsCaptured:report.records.length,complete:false,columns};
+}
+
 // Serialized into the existing Steam document. Only aircraft selection and Details are clicked.
 export async function inspectDetails(doc,aircraft){
   const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
