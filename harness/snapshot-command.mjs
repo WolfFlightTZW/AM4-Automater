@@ -1,7 +1,8 @@
 import {fileURLToPath} from 'node:url';
 import {join,resolve} from 'node:path';
 import {existsSync,mkdirSync,writeFileSync,renameSync,readFileSync} from 'node:fs';
-import {spawn} from 'node:child_process';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
 import {OperatorControl,OperatorSession} from '../operator/control.mjs';
 import {preflight} from '../operator/process-diagnostics.mjs';
@@ -12,6 +13,10 @@ import {domExpression} from './dom.mjs';
 import {alaskaStamp,validateFleet,publishSnapshot,publishIncompleteSnapshot,detailsExpression} from './fleet-snapshot.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export function restorationAllowed(initial,current,revision){return initial.mode==='AUTOMATIC'&&current.mode==='TESTING'&&current.revision===revision&&!current.owner&&!current.action&&current.quarantineUntil<=Date.now();}
+export async function launchController(root,execute=promisify(execFile)){
+  // Same hidden Start-Process handoff as the normal operator launcher, without a second resume request.
+  return execute('powershell.exe',['-NoProfile','-WindowStyle','Hidden','-Command',"$am4Args=@('-NoProfile','-ExecutionPolicy','Bypass','-File',([char]34+$env:AM4_SNAPSHOT_LAUNCHER+[char]34));Start-Process -FilePath powershell.exe -WindowStyle Hidden -ArgumentList $am4Args"],{cwd:root,windowsHide:true,timeout:20000,env:{...process.env,AM4_SNAPSHOT_LAUNCHER:join(root,'Start-AM4.ps1')}});
+}
 const safeView=s=>({mode:s.mode,revision:s.revision,owner:s.owner?{pid:s.owner.pid,role:s.owner.role,heartbeat:s.owner.heartbeat}:null,activeAction:s.activeAction,action:s.action,uncertainty:s.uncertainty,safeToUseGame:s.safeToUseGame,display:s.display});
 function recoverySummary(root){const p=join(root,'harness/state/recovery.sqlite');if(!existsSync(p))throw Error('RECOVERY_LEDGER_MISSING');const db=new DatabaseSync(p,{readOnly:true});try{return db.prepare("SELECT state,count(*) AS count FROM actions GROUP BY state ORDER BY state").all();}finally{db.close();}}
 function writeJson(path,value){writeFileSync(path+'.tmp',JSON.stringify(value,null,2));renameSync(path+'.tmp',path);}
@@ -61,9 +66,10 @@ export async function runSnapshot(root=fileURLToPath(new URL('../',import.meta.u
     // A later operator pause/change always wins; an uncertain CDP outcome never auto-resumes.
     if(testingRevision!==undefined&&state.mode==='TESTING'&&state.revision===testingRevision&&!state.owner&&!state.action){
       if(restorationAllowed(initial,state,testingRevision)&&!report.errors.some(e=>e.reason==='CDP_CLOSE_NOT_CONFIRMED')){
-        try{await preflight();control.request('AUTOMATIC',{expectedRevision:testingRevision});const child=spawn('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',join(root,'Start-AM4.ps1')],{windowsHide:true,detached:true,stdio:'ignore'});child.on('error',()=>{});child.unref();
+        let resumeRevision;
+        try{await preflight();resumeRevision=control.request('AUTOMATIC',{expectedRevision:testingRevision}).revision;await launchController(root);
           const until=Date.now()+25000;while(Date.now()<until){state=control.status();if(state.mode!=='AUTOMATIC')throw Error('OPERATOR_MODE_CHANGED_DURING_RESTORE');if(state.owner?.role==='AUTOMATIC')break;await sleep(250);}if(!state.owner)throw Error('CONTROLLER_RESTORE_NOT_CONFIRMED');
-        }catch(error){failure||=error;report.errors.push({reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'CONTROLLER_RESTORE_FAILED'});}
+        }catch(error){failure||=error;report.errors.push({reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'CONTROLLER_RESTORE_FAILED'});const current=control.status();if(resumeRevision!==undefined&&current.mode==='AUTOMATIC'&&current.revision===resumeRevision)control.request('PAUSED/MANUAL',{expectedRevision:resumeRevision});}
       }else {control.request('PAUSED/MANUAL',{expectedRevision:testingRevision});report.restorationRequestedBySnapshot=true;}
     }
     report.finalControl=safeView(control.status());report.finalRecovery=recoverySummary(root);report.restorationVerified=report.finalControl.mode===initial.mode&&(initial.mode!=='AUTOMATIC'||report.finalControl.owner?.role==='AUTOMATIC');
