@@ -7,7 +7,7 @@
         "status": "landed",
         "location": "landedList",
         "grounded": "0",
-        "wear": 12.5,
+        "wear": 25,
         "aircraftId": "123"
       }
     ],
@@ -18,7 +18,7 @@
           "registration": "N-TEST001",
           "id": "123",
           "atBase": true,
-          "wear": 12.5,
+          "wear": 25,
           "hoursToCheck": 19,
           "availableActions": [
             "repair",
@@ -48,7 +48,7 @@
         "status": "landed",
         "location": "landedList",
         "grounded": "1",
-        "wear": 12.5,
+        "wear": 25,
         "aircraftId": "123"
       }
     ],
@@ -59,7 +59,7 @@
           "registration": "N-TEST001",
           "id": "123",
           "atBase": true,
-          "wear": 12.5,
+          "wear": 25,
           "hoursToCheck": 19
         }
       ]

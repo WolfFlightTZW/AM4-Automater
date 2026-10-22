@@ -16,8 +16,8 @@ globalThis.getComputedStyle=()=>({visibility:'visible'});
 const root=new URL('../../',import.meta.url);
 const source=readSource(fileURLToPath(root));
 function snapshot(kind='check'){
- return {captured:new Date().toISOString(),fleet:[{aircraftId:'123',registration:'N-TEST001',location:'landedList',status:'landed',grounded:'0',wear:kind==='repair'?12:2}],
- maintenance:{ok:true,records:[{id:'123',registration:'N-TEST001',wear:kind==='repair'?12:2,hoursToCheck:kind==='check'?14:200,availableActions:[kind]}]},schedule:{complete:true,entries:[]},
+ return {captured:new Date().toISOString(),fleet:[{aircraftId:'123',registration:'N-TEST001',location:'landedList',status:'landed',grounded:'0',wear:kind==='repair'?25:2}],
+ maintenance:{ok:true,records:[{id:'123',registration:'N-TEST001',wear:kind==='repair'?25:2,hoursToCheck:kind==='check'?14:200,availableActions:[kind]}]},schedule:{complete:true,entries:[]},
  markets:{ok:true,fuel:{holding:2000000,capacityMax:4000000},co2:{holding:2000000,capacityMax:4000000}}};
 }
 function unavailable(s,kind='check'){
@@ -54,7 +54,7 @@ test('forged, mismatched, missing or ambiguous disabled evidence never suppresse
  }
 });
 test('due but unavailable A-check falls through rather than choosing repair',()=>{
- const s=snapshot();s.fleet[0].wear=12;Object.assign(s.maintenance.records[0],{wear:12,availableActions:['check','repair']});
+ const s=snapshot();s.fleet[0].wear=25;Object.assign(s.maintenance.records[0],{wear:25,availableActions:['check','repair']});
  assert.equal(applyMaintenanceUnavailable(s,'N-TEST001','check',unavailable(s)),true);
  assert.equal(maintenanceChoice(s,'N-TEST001'),null);assert.equal(requiredMaintenance(s,'N-TEST001'),null);assert.equal(departureEligibility(s,'N-TEST001',[],2).eligible,true);
 });

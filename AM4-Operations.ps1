@@ -257,7 +257,7 @@ try{
   foreach($a in $landed){
    $m=$byReg[[string]$a.registration];$reasons=@()
    if($null -eq $m){$reasons+='MAINTENANCE_UNKNOWN'}else{
-    if([double]$m.wear -gt 9){$reasons+='REPAIR_REQUIRED'}
+    if([double]$m.wear -ge 20){$reasons+='REPAIR_REQUIRED'}
     if([double]$m.hoursToCheck -le 20){$reasons+='A_CHECK_PLANNING'}
     elseif([double]$m.hoursToCheck -le 40){$reasons+='A_CHECK_WATCH'}
    }
@@ -312,7 +312,7 @@ try{
  const match=text.match(new RegExp('(?:^|\\s)'+esc+'\\s+Pax\\s+Flight hours\\s+[\\d,]+\\s+(At base|Not at base)\\s+Hours to check\\s+([\\d,]+)\\s+Wear\\s+([\\d,.]+)\\s*%'));
  if(!match||match[1]!=='At base')return JSON.stringify({ok:false,reason:'Exact aircraft not verified at base'});
  const hours=Number(match[2].replace(/,/g,'')),wear=Number(match[3].replace(/,/g,''));
- if(kind==='repair'&&!(wear>9))return JSON.stringify({ok:false,reason:'Wear no longer over 9'});
+ if(kind==='repair'&&!(wear>=20))return JSON.stringify({ok:false,reason:'Wear below 20'});
  if(kind==='check'&&!(hours<=20))return JSON.stringify({ok:false,reason:'A-check not yet due'});
  // No trustworthy evidence of pending-work absence is available from this popup.
  // Require an explicit zero-pending signal before committing. Otherwise HOLD.

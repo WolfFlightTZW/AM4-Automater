@@ -3,5 +3,6 @@
   "resourceObservationMaxAgeMs": 10000,
   "recoveryBackoffSeconds": 30,
   "retainPassHistory": false,
-  "diagnosticReason": null
+  "diagnosticReason": null,
+  "repairWearThreshold": 20
 }

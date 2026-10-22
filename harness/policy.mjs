@@ -1,3 +1,4 @@
+import {settings} from './settings.mjs';
 import {identityRows,excludedAircraft,scheduleMatches,validAircraftId} from './identity.mjs';
 export function wholeQuantity({ kind, price, capacity, holding, cash }, lot = 1) {
   if (![price, capacity, holding, cash, lot].every(Number.isSafeInteger) || price <= 0 || capacity < holding || holding < 0 || lot < 1) throw new Error('INVALID_MARKET_VALUES');
@@ -28,7 +29,7 @@ export function maintenanceEligibility(snapshot, registration, kind, holds = [],
   if ((snapshot.schedule?.entries || []).some(e => scheduleMatches(e,aircraft?.registration||registration,id))) reasons.push('EXISTING_SCHEDULE');
   if (holds.length) reasons.push('DURABLE_ACTION_HOLD');
   if(requireAction&&!row?.availableActions?.includes(kind))reasons.push('ACTION_NOT_AVAILABLE');
-  if (row && (kind === 'repair' ? !(row.wear > 9) : !(row.hoursToCheck <= 20))) reasons.push('NOT_DUE');
+  if (row && (kind === 'repair' ? !(row.wear >= settings.repairWearThreshold) : !(row.hoursToCheck <= 20))) reasons.push('NOT_DUE');
   return { eligible: reasons.length === 0, reasons, aircraft, row };
 }
 export function maintenanceChoice(snapshot,registration,holds=[]){
@@ -77,7 +78,7 @@ export function reconcile(action, snapshot) {
   const {fleet,rows}=identityRows(snapshot,action.registration,action.aircraftId);
   const after = rows[0], before = action.before?.maintenance?.records?.find(r => r.id === action.aircraftId);
   const landed = fleet.length === 1 && ['landedList','parkedList'].includes(fleet[0].location) && ['landed','parked'].includes(fleet[0].status) && fleet[0].grounded === '0';
-  const condition = rows.length === 1 && before && after?.atBase && (action.kind === 'repair' ? after.wear <= 9 && after.wear < before.wear : after.hoursToCheck > before.hoursToCheck && after.hoursToCheck > 20);
+  const condition = rows.length === 1 && before && after?.atBase && (action.kind === 'repair' ? after.wear < settings.repairWearThreshold && after.wear < before.wear : after.hoursToCheck > before.hoursToCheck && after.hoursToCheck > 20);
   if (action.scheduleSeen && landed && condition) return { state: 'COMPLETED_VERIFIED', result: 'PASS', reason: 'SCHEDULE_CLEARED_AND_CONDITION_RESTORED', scheduleSeen: true };
   return { state: action.state, result: 'INCONCLUSIVE', reason: 'COMPLETION_NOT_PROVEN', scheduleSeen: action.scheduleSeen };
 }
@@ -96,7 +97,7 @@ export function reconcileRecovery(action,snapshot) {
   if(entries.length)return unresolved('SCHEDULE_AMBIGUOUS_OR_CONFLICTING');
   const {fleet,rows}=identityRows(snapshot,action.registration,action.aircraftId);
   const before=action.before?.maintenance?.records?.find(r=>r.id===action.aircraftId),row=rows[0];
-  const improved=before&&rows.length===1&&(action.kind==='repair'?Number.isFinite(row.wear)&&row.wear<=9&&row.wear<before.wear:Number.isFinite(row.hoursToCheck)&&row.hoursToCheck>20&&row.hoursToCheck>before.hoursToCheck);
+  const improved=before&&rows.length===1&&(action.kind==='repair'?Number.isFinite(row.wear)&&row.wear<settings.repairWearThreshold&&row.wear<before.wear:Number.isFinite(row.hoursToCheck)&&row.hoursToCheck>20&&row.hoursToCheck>before.hoursToCheck);
   if(snapshot.maintenance?.ok&&fleet.length===1&&improved)return {state:'RESOLVED_CURRENT_UI',result:'PASS',reason:'CURRENT_IDENTITY_AND_RESTORED_CONDITION_NO_CONFLICTING_SCHEDULE',scheduleSeen:Boolean(action.scheduleSeen),evidence:{aircraftId:action.aircraftId,wear:row.wear,hoursToCheck:row.hoursToCheck,scheduleComplete:true,observed:snapshot.captured||null}};
   return unresolved('CURRENT_UI_NOT_SUFFICIENT_TO_RESOLVE_SUBMISSION');
 }

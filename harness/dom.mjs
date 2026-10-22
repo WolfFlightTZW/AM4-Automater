@@ -1,6 +1,7 @@
+import {settings} from './settings.mjs';
 // Runs in the already-connected Steam document. No HTTP endpoints are invented or called.
 // Navigation and maintenance planning reuse the click sequence in the archived single-action scripts.
-export function createDom(doc = document) {
+export function createDom(doc = document, repairWearThreshold = 20) {
   const clean = s => String(s || '').replace(/\s+/g, ' ').trim();
   const visible = e => Boolean(e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
   const enabled = e => visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true';
@@ -172,7 +173,7 @@ export function createDom(doc = document) {
     const balance = cash();
     if (!Number.isSafeInteger(balance) || balance - fresh.cost < 100000000 || browserAutomation().length) return { ok: false, clicked: false, reason: 'CASH_OR_BROWSER_AUTOMATION_GATE' };
     const fleet = [...doc.querySelectorAll('#landedList .flight-list[data-reg]')].filter(r => r.id === 'flightStatus'+id && r.dataset.reg === registration && r.dataset.grounded === '0' && clean(r.querySelector('[id^="flightStatusCounter"]')?.textContent).toLowerCase() === 'landed');
-    if (fleet.length !== 1 || registration === 'N-145' || excludedAircraftIds.includes(id) || (kind === 'repair' ? !(fresh.row.wear > 9) : !(fresh.row.hoursToCheck <= 20))) return { ok: false, clicked: false, reason: 'PRECOMMIT_ELIGIBILITY_CHANGED' };
+    if (fleet.length !== 1 || registration === 'N-145' || excludedAircraftIds.includes(id) || (kind === 'repair' ? !(fresh.row.wear >= repairWearThreshold) : !(fresh.row.hoursToCheck <= 20))) return { ok: false, clicked: false, reason: 'PRECOMMIT_ELIGIBILITY_CHANGED' };
     const key = id + ':' + kind;
     globalThis.__am4HarnessAttempts ||= {};
     if (globalThis.__am4HarnessAttempts[key]) return { ok: false, clicked: false, reason: 'PAGE_ATTEMPT_ALREADY_RECORDED' };
@@ -219,6 +220,6 @@ export function createDom(doc = document) {
 }
 export function domExpression(method, args = []) {
   if (!['maintenance', 'schedule', 'controls', 'browserAutomation', 'navigate', 'showFleet', 'openPlanner', 'inspectPlanner', 'commit', 'response', 'flight', 'inventory', 'receipt', 'departureObservation'].includes(method)) throw new Error('DOM_METHOD_NOT_ALLOWED');
-  return `(async()=>JSON.stringify(await (${createDom.toString()})(document)[${JSON.stringify(method)}](...${JSON.stringify(args)})))()`;
+  return `(async()=>JSON.stringify(await (${createDom.toString()})(document,${JSON.stringify(settings.repairWearThreshold)})[${JSON.stringify(method)}](...${JSON.stringify(args)})))()`;
 }
 
