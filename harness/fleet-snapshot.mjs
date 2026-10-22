@@ -19,7 +19,8 @@ export function displayedFields(raw){
   const labels=['Aircraft','Manufacturer','Delivered','Purchase date','Acquisition date','Age','Aircraft age','Ownership duration','Hours to check','Flight hours/Cycles','Flight hours','Flight cycles','Min runway','Wear','Type','Range','Speed','Cruise speed','Purchase price','Current valuation','Resale value','Configuration','Capacity','Engine','Engines','Fuel consumption','Fuel usage','CO2','Co2 emission','Condition','Status','Location','Base','SEAT LAYOUT','TODAYS DEMAND','FLIGHT HISTORY'];
   for(let i=0;i<lines.length;i++)if(labels.includes(lines[i])){
     const stop=lines.findIndex((l,j)=>j>i&&(labels.includes(l)||['Maintenance','Reroute','Sell','Ground','Depart','Ground Depart'].includes(l)));
-    const values=lines.slice(i+1,stop<0?lines.length:stop);
+    const section=['SEAT LAYOUT','TODAYS DEMAND','FLIGHT HISTORY'].includes(lines[i]);
+    const values=lines.slice(i+1,section?(stop<0?lines.length:stop):Math.min(i+2,stop<0?lines.length:stop));
     // Never infer a missing value from the next label.
     if(values.length)add(lines[i],values.join('\n'));
   }
@@ -66,7 +67,8 @@ export async function inspectDetails(doc,aircraft){
   if(rows.length!==1)return {ok:false,reason:'FLEET_IDENTITY_NOT_UNIQUE',...aircraft};
   rows[0].click();
   let details;
-  for(let n=0;n<35;n++){
+  const panelDeadline=Date.now()+3500;
+  while(Date.now()<panelDeadline){
     await sleep(100);
     const buttons=[...doc.querySelectorAll('#flightInfo button,#flightInfo a')].filter(e=>visible(e)&&clean(e.textContent)==='Details'&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');
     if(buttons.length===1&&buttons[0].getAttribute('onclick')?.match(/routes_main\.php\?mode=details&id=(\d+)/)?.[1]===aircraft.aircraftId){details=buttons[0];break;}
@@ -74,10 +76,12 @@ export async function inspectDetails(doc,aircraft){
   if(!details)return {ok:false,reason:'DETAILS_CONTROL_UNAVAILABLE',...aircraft};
   const flightPanel=doc.querySelector('#flightInfo')?.innerText||'';
   details.click();let pop;
-  for(let n=0;n<55;n++){
+  const detailDeadline=Date.now()+5500;
+  while(Date.now()<detailDeadline){
     await sleep(100);pop=doc.querySelector('#popup');
     if(visible(pop)&&clean(pop.querySelector('#fleet-name')?.textContent)===aircraft.registration){
-      const ids=[...pop.querySelectorAll('button,a')].map(e=>e.getAttribute('onclick')?.match(/maintenance_main\.php\?action=(\d+)/)?.[1]).filter(Boolean);
+      // Inflight Details omit Maintenance. The existing Rename control still binds the aircraft ID.
+      const ids=[...pop.querySelectorAll('button,a')].map(e=>{const handler=e.getAttribute('onclick')||'';return handler.match(/maintenance_main\.php\?action=(\d+)/)?.[1]||handler.match(/fleet_details\.php\?id=(\d+)&mode=reg(?:&|'|")/)?.[1];}).filter(Boolean);
       if(ids.length&&ids.every(id=>id===aircraft.aircraftId)){await sleep(200);break;}
     }
     pop=null;

@@ -31,7 +31,7 @@ export async function runSnapshot(root=fileURLToPath(new URL('../',import.meta.u
     guard=await acquireGuard(()=>cdp?.close());
     testingRevision=control.request('TESTING',{expectedRevision:pausedRevision}).revision;
     operator=new OperatorSession(join(root,'operator/state'),'TESTING');
-    cdp=await Cdp.connect(12000,operator);
+    cdp=await Cdp.connect(17000,operator);
     const evaluate=async(expression,label)=>{operator.assertCanCommit();return cdp.evaluate(expression,label);};
     if((await evaluate(domExpression('browserAutomation'),'Snapshot browser automation inspection')).length)throw Error('BROWSER_AUTOMATION_ACTIVE');
     const source=readSource(root);
@@ -63,7 +63,7 @@ export async function runSnapshot(root=fileURLToPath(new URL('../',import.meta.u
         try{await preflight();control.request('AUTOMATIC',{expectedRevision:testingRevision});const child=spawn('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',join(root,'Start-AM4.ps1')],{windowsHide:true,detached:true,stdio:'ignore'});child.on('error',()=>{});child.unref();
           const until=Date.now()+25000;while(Date.now()<until){state=control.status();if(state.mode!=='AUTOMATIC')throw Error('OPERATOR_MODE_CHANGED_DURING_RESTORE');if(state.owner?.role==='AUTOMATIC')break;await sleep(250);}if(!state.owner)throw Error('CONTROLLER_RESTORE_NOT_CONFIRMED');
         }catch(error){failure||=error;report.errors.push({reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'CONTROLLER_RESTORE_FAILED'});}
-      }else control.request('PAUSED/MANUAL',{expectedRevision:testingRevision});
+      }else {control.request('PAUSED/MANUAL',{expectedRevision:testingRevision});report.restorationRequestedBySnapshot=true;}
     }
     report.finalControl=safeView(control.status());report.finalRecovery=recoverySummary(root);report.restorationVerified=report.finalControl.mode===initial.mode&&(initial.mode!=='AUTOMATIC'||report.finalControl.owner?.role==='AUTOMATIC');
     if(!report.restorationVerified){failure||=Error('ORIGINAL_MODE_NOT_RESTORED');}
