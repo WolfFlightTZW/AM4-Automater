@@ -60,3 +60,9 @@ This is offline setup: it starts in PAUSED/MANUAL, performs no game actions, and
 Start explicitly only after reviewing the documented policies and confirming other automation is stopped. Reports are then generated locally from that user's own AM4 UI. The high-cycle CSV generator remains enabled; existing reports and recovery data are never deleted by setup.
 
 Routine SQLite event collection and pass-history accumulation are disabled by default. A specific diagnostic can set `diagnosticReason` in `harness/production-settings.json`; its events remain capped. `retainPassHistory` is an explicit local report opt-in. Existing files are retained, not purged. Purchasing skip reports and the high-cycle CSV remain local outputs.
+
+## Full fleet Details snapshot
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File .\AM4-FleetSnapshot.ps1` (or `node harness/snapshot-command.mjs --run`). This explicitly authorizes a controlled pause, exclusive TESTING lease, read-only inspection of every current aircraft, and restoration of the initial mode. No maintenance, departure, purchasing or configuration controls are clicked. A later operator pause or uncertain CDP outcome prevents automatic resumption.
+
+The Alaska-time filename is `Reports/TodaySnapshot-YYYYMMDD-HHMMSS.csv`. A structured `.raw.json` companion retains all displayed Details text, extracted fields and controls, including flight history. Unknown/unavailable values remain blank; no model specifications are inferred. The `.incomplete.json` diagnostic records enumeration, errors and final controller state. A CSV is published atomically only when every unique current aircraft has verified Details and final fleet membership matches. These explicitly requested reports stay local and ignored by Git. A snapshot is sequential, not a simultaneous game-state observation; each row includes its actual capture time.
