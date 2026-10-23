@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { Cdp } from './cdp.mjs';
 import { acquireGuard } from './guard.mjs';
 import { domExpression } from './dom.mjs';
-import { renderBlock, readSource } from './source.mjs';
+import { renderBlock, readSource, marketExpression } from './source.mjs';
 import { maintenanceEligibility, departureEligibility, reconcile, reconcileRecovery, wholeQuantity, verifyPurchase } from './policy.mjs';
 import { readProductionHolds } from './store.mjs';
 import { OperatorSession } from '../operator/control.mjs';
@@ -34,8 +34,9 @@ export class Runner {
     }catch(e){this.close();throw e;}
   }
   remaining() { const ms = this.deadline - Date.now(); if (ms <= 0) throw new Error('SCENARIO_TIME_BUDGET_EXHAUSTED'); return ms; }
-  async evaluate(expression, label) {
-    if(/source\.purchase/.test(label)||/DOM\.commit|source\.departJs/.test(label)&&!this.batchSnapshot)this.resources.invalidate();
+  async evaluate(expression, label, {resourceKind}={}) {
+    if(/source\.purchase/.test(label))this.resources.invalidate(resourceKind);
+    else if(/DOM\.commit|source\.departJs/.test(label)&&!this.batchSnapshot)this.resources.invalidate();
     this.cdp.timeoutMs = Math.min(String(label).startsWith('source.purchaseJsTemplate')?17000:12000, this.remaining());
     let value;
     try{value=await this.cdp.evaluate(expression,label);}catch(error){this.resources.invalidate();throw error;}
@@ -46,9 +47,9 @@ export class Runner {
   dom(method,args=[]){const read=()=>this.evaluate(domExpression(method,args),'DOM.'+method);const category={openPlanner:'navigation',flight:'flightInspection',receipt:'receiptInspection',departureObservation:'targetInspection',inventory:'headerInspection'}[method];return category?this.measure(category,read):read();}
   async nav(view) { const result = await this.measure('navigation',()=>this.dom('navigate',[view])); if (!result.ok) throw new Error(result.reason); }
   measure(name,operation){if(!this.performance)return operation();return name==='navigation'&&this.actionInProgress?this.performance.measure('actionNavigation',()=>this.performance.measure(name,operation)):this.performance.measure(name,operation);}
-  async markets({fresh=false}={}) {
+  async markets({fresh=false,kinds}={}) {
     try{this.operator?.assertCanCommit();}catch(error){this.resources.invalidate();throw error;}
-    return this.resources.read(()=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(this.source.blocks.marketJs,'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);return value;}),{fresh});
+    return this.resources.read(requestedKinds=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(marketExpression(this.source.blocks.marketJs,requestedKinds),'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);return value;}),{fresh,kinds});
   }
   async fleet() { const rows=await this.measure('fleetScan',()=>this.evaluate(this.source.blocks.fleetJs,'source.fleetJs'));this.aircraftIds.clear();for(const a of rows){if(validAircraftId(a.aircraftId)&&rows.filter(r=>r.registration===a.registration).length===1)this.aircraftIds.set(a.registration,a.aircraftId);if(a.registration==='N-145'&&validAircraftId(a.aircraftId))this.excludedIds.add(a.aircraftId);}return rows; }
   async snapshot({ markets = false } = {}) {
@@ -263,7 +264,7 @@ export class Runner {
   }
 
   async purchase(report, kind) {
-    report.startingState = { markets: await this.markets({fresh:true}) };
+    report.startingState = { markets: await this.markets({fresh:true,kinds:[kind]}) };
     const market = report.startingState.markets[kind];
     if (!market?.ok) throw new Error('MARKET_INCOMPLETE');
     const input = { kind, price: market.pricePer1000, capacity: market.capacityMax, holding: market.holding, cash: market.cash };
@@ -276,20 +277,20 @@ export class Runner {
     await this.guard.check();
     this.verifySource();
     // Existing template re-reads values, calculates amount, and verifies. Bind confirmation to the same quote.
-    const before = await this.markets({fresh:true});
+    const before = await this.markets({fresh:true,kinds:[kind]});
     if (!samePurchaseQuote(before[kind],market)) throw new Error('MARKET_CHANGED_AFTER_CONFIRMATION');
     const action = this.store.intent({ registration: kind, kind: 'purchase', before, quote: { requested, cost, maximumDebit:Math.ceil(requested*input.price/1000) } });
     report.checkpoint = action.id; report.actionAttempted = { name: 'purchase:' + kind, submitted: 'POSSIBLE', actionId: action.id }; this.store.saveCase(report);
     // Guard wrapper binds the template's internally re-read quote/amount. The purchase body stays unchanged.
     const template = bindPurchase(this.source.blocks.purchaseJsTemplate, kind, { ...input, requested, cost });
-    const result = await this.evaluate(template, 'source.purchaseJsTemplate.confirmationBound');
+    const result = await this.evaluate(template, 'source.purchaseJsTemplate.confirmationBound',{resourceKind:kind});
     report.actionAttempted.submitted = result.clickAttempted;
     const verification = verifyPurchase(result);
     // Even an exact delta must match the confirmed quote and quantity.
     const pass = verification.result === 'PASS' && result.requested === requested && result.estimatedCost === cost;
     action.state = !result.clickAttempted ? 'NOT_SUBMITTED' : 'UNKNOWN'; action.response = result; this.store.saveAction(action);
     if (pass) { action.state = 'PURCHASE_VERIFIED'; this.store.saveAction(action); }
-    report.gameResponse = { result, verification }; report.endingState = { markets: await this.markets({fresh:true}) }; report.result = pass ? 'PASS' : 'INCONCLUSIVE';
+    report.gameResponse = { result, verification }; report.endingState = { markets: await this.markets({fresh:true,kinds:[kind]}) }; report.result = pass ? 'PASS' : 'INCONCLUSIVE';
     report.reason = pass ? 'SEPARATELY_AUTHORIZED_PURCHASE_VERIFIED' : 'PURCHASE_NOT_PROVEN_NO_RETRY';
   }
   close() { this.resources.invalidate();this.cdp?.close(); this.guard?.release();this.operator?.close(); }

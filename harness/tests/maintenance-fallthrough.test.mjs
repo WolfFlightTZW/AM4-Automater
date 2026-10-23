@@ -28,7 +28,7 @@ async function productionBranch(s,result){
  let calls=0;
  const code=production.slice(production.indexOf('      const kind=requiredMaintenance('),production.indexOf('      const e=departureEligibility('));
  const context={snapshot:s,a:s.fleet[0],maintenanceChoice,requiredMaintenance,applyMaintenanceUnavailable,maintenanceCount:0,maxMaintenance:20,report:{held:[],maintenanceActions:[]},
- runner:{holds:()=>[],performance:{counts:{skipped:0}},resources:{observeHeader(){},priceDue:()=>false,low:()=>false},dom:async()=>({})},
+ runner:{holds:()=>[],performance:{counts:{skipped:0}},resources:{observeHeader(){},purchaseDue:()=>false,priceDue:()=>false,low:()=>false},dom:async()=>({})},
  action:async(scenario,reg)=>{calls++;return typeof result==='function'?result(scenario,reg):result;},purchaseMarkets:async()=>{throw Error('UNEXPECTED_MARKET');}};
  const held=await vm.runInNewContext('(async()=>{for(const candidate of [0]){'+code+';return false;}return true;})()',context);
  return {held,calls};

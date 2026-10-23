@@ -77,7 +77,7 @@ function Invoke-AM4([string]$js){
 }
 
 $marketJs=@'
-(async()=>{
+(async(kinds=['fuel','co2'])=>{
  const clean=s=>String(s||'').replace(/\s+/g,' ').trim(),vis=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden',pause=ms=>new Promise(r=>setTimeout(r,ms));
  const inspectionStarted=Date.now();
  const menu=[...document.querySelectorAll('#smallMainMenu [onclick],.menu-btn-new[onclick]')].filter(vis).find(e=>clean(e.innerText).toUpperCase()==='FUEL');
@@ -94,10 +94,14 @@ $marketJs=@'
   const timer=clean(document.getElementById(kind==='fuel'?'fuelTimer':'co2Timer')?.innerText).match(/^(\d{1,3}):(\d{2}):(\d{2})$/),nextRefreshSeconds=timer&&Number(timer[2])<60&&Number(timer[3])<60?Number(timer[1])*3600+Number(timer[2])*60+Number(timer[3]):null;
   return {ok:!!(price&&cap&&hold&&account),kind,nextRefreshSeconds,pricePer1000:n(price?.[1]),capacityUsed:n(cap?.[1]),capacityMax:n(cap?.[2]),holding:n(hold?.[1]),cash:n(account?.[1])};
  };
- const fuel=read('fuel'),fuelMs=Date.now()-inspectionStarted,co2Started=Date.now();
- const tab=document.querySelector('#popBtn2');if(!tab||!vis(tab)||!/CO2|CO\u2082/i.test(clean(tab.innerText)))return JSON.stringify({ok:false,reason:'CO2 tab unavailable',fuel});
- tab.click();await pause(850);const co2=read('co2');
- return JSON.stringify({ok:fuel.ok&&co2.ok,fuel,co2,inspectionMs:{fuel:fuelMs,co2:Date.now()-co2Started}});
+ const result={ok:true,inspectionMs:{}};
+ if(kinds.includes('fuel')){result.fuel=read('fuel');result.inspectionMs.fuel=Date.now()-inspectionStarted;}
+ if(kinds.includes('co2')){
+  const co2Started=Date.now(),tab=document.querySelector('#popBtn2');
+  if(!tab||!vis(tab)||!/CO2|CO\u2082/i.test(clean(tab.innerText)))return JSON.stringify({...result,ok:false,co2:{ok:false,kind:'co2',reason:'CO2 tab unavailable'}});
+  tab.click();await pause(850);result.co2=read('co2');result.inspectionMs.co2=Date.now()-co2Started;
+ }
+ result.ok=kinds.every(k=>result[k]?.ok);return JSON.stringify(result);
 })()
 '@
 $purchaseJsTemplate=@'

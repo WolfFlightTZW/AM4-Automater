@@ -1,8 +1,21 @@
 // Session-only observations and receipt-accounted working inventory. Nothing is persisted.
 export class ResourceCache {
-  constructor({maxAgeMs=10000,unreliableTimerRetryMs=60000,now=Date.now}={}){this.unreliableTimerRetryMs=unreliableTimerRetryMs;this.maxAgeMs=maxAgeMs;this.now=now;this.batch=false;this.invalidate();this.metrics={reads:0,hits:0,invalidations:0,receiptDebits:0,uncertainDebits:0,headerMismatches:0};}
-  invalidate(){this.value=null;this.at=0;if(this.metrics)this.metrics.invalidations++;}
-  priceDue(){return !this.value||['fuel','co2'].some(k=>this.now()>=(this.value[k]?.priceValidUntil??this.at+this.maxAgeMs));}
+  constructor({maxAgeMs=10000,unreliableTimerRetryMs=60000,now=Date.now}={}){this.unreliableTimerRetryMs=unreliableTimerRetryMs;this.maxAgeMs=maxAgeMs;this.now=now;this.batch=false;this.decisions={};this.logKeys={};this.invalidate();this.metrics={reads:0,hits:0,invalidations:0,receiptDebits:0,uncertainDebits:0,headerMismatches:0};}
+  invalidate(kind){if(kind&&this.value){delete this.value[kind];this.value.ok=false;}else{this.value=null;this.at=0;}if(this.metrics)this.metrics.invalidations++;}
+  priceDue(kind){return kind?this.marketDue(kind):['fuel','co2'].some(k=>this.marketDue(k));}
+  marketDue(kind){const m=this.value?.[kind];return !m||(!(m.ok&&m.holding>=m.capacityMax)&&this.now()>=(m.priceValidUntil??0));}
+  purchaseKey(kind){const m=this.value?.[kind];return m?JSON.stringify([m.pricePer1000,m.holding,m.capacityMax,m.cash]):null;}
+  purchaseDue(kind){
+    if(this.marketDue(kind))return true;
+    const m=this.value?.[kind];if(!m?.ok||m.holding>=m.capacityMax)return false;
+    if(m.pricePer1000>=(kind==='fuel'?1000:150))return this.decisions[kind]?.price!==m.pricePer1000;
+    return this.decisions[kind]?.key!==this.purchaseKey(kind);
+  }
+  recordPurchaseDecision(kind,d){
+    this.decisions[kind]={key:this.purchaseKey(kind),price:this.value?.[kind]?.pricePer1000};
+    const key=JSON.stringify([d.decision,d.reason,d.price,d.holding,d.capacity,...(d.reason==='CASH_RESERVE_PREVENTS_ANY_WHOLE_UNIT'?[d.cash]:[])]);
+    const changed=d.decision!=='SKIP'||this.logKeys[kind]!==key;this.logKeys[kind]=key;return changed;
+  }
   low(){return !this.value||['fuel','co2'].some(k=>!Number.isSafeInteger(this.value[k]?.holding)||this.value[k].holding<250000);}
   observeHeader(header){
     if(!this.value)return false;
@@ -23,10 +36,22 @@ export class ResourceCache {
     if(!this.observeHeader(after.header)){this.metrics.uncertainDebits++;return false;}
     this.lastIssue=null;this.metrics.receiptDebits++;return true;
   }
-  async read(load,{fresh=false}={}){
-    if(!fresh&&this.value&&(this.batch?!this.priceDue():this.now()-this.at<this.maxAgeMs)){this.metrics.hits++;return structuredClone(this.value);}
-    this.invalidate();this.metrics.reads++;const value=await load();
-    if(value?.ok){this.at=this.now();this.value=structuredClone(value);for(const k of ['fuel','co2']){if(!this.value[k])continue;const seconds=value[k]?.nextRefreshSeconds;this.value[k].priceValidUntil=this.at+(Number.isInteger(seconds)&&seconds>0?Math.max(1000,seconds*1000-2000):this.unreliableTimerRetryMs);}}
-    return value;
+  async read(load,{fresh=false,kinds}={}){
+    // Standalone consumers retain their short TTL. Production merges only the due resources.
+    if(!this.batch&&!kinds){
+      if(!fresh&&this.value&&this.now()-this.at<this.maxAgeMs){this.metrics.hits++;return structuredClone(this.value);}
+      this.invalidate();this.metrics.reads++;const value=await load();
+      if(value?.ok){this.at=this.now();this.value=structuredClone(value);for(const k of ['fuel','co2'])if(this.value[k])this.setDeadline(k);}
+      return value;
+    }
+    const due=(kinds||['fuel','co2']).filter(k=>fresh||this.marketDue(k));
+    if(!due.length){this.metrics.hits++;return structuredClone(this.value);}
+    this.metrics.reads++;const observed=await load(due);this.at=this.now();this.value||={ok:false};
+    for(const k of due){this.value[k]=structuredClone(observed?.[k]||{ok:false,kind:k,reason:observed?.reason||'MARKET_VALUES_UNAVAILABLE'});this.setDeadline(k);}
+    const cash=due.map(k=>this.value[k]).find(m=>m.ok&&Number.isSafeInteger(m.cash))?.cash;
+    if(cash!==undefined)for(const k of ['fuel','co2'])if(this.value[k])this.value[k].cash=cash;
+    this.value.ok=['fuel','co2'].every(k=>this.value[k]?.ok);
+    return structuredClone(this.value);
   }
+  setDeadline(kind){const m=this.value[kind],seconds=m.nextRefreshSeconds;m.priceValidUntil=this.now()+(m.ok&&Number.isInteger(seconds)&&seconds>0?seconds*1000:this.unreliableTimerRetryMs);}
 }

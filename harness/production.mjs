@@ -51,9 +51,10 @@ async function action(scenario,registration){
 }
 async function purchaseMarkets(trigger){
   active();runner.deadline=Date.now()+120000;
-  // A purchase can change cash, so re-read immediately for each resource.
+  // Only a due resource gets a new observation/decision; actions retain fresh quote binding.
   for(const kind of ['fuel','co2']){
-    const m=await runner.markets({fresh:true});report.markets=m;
+    if(!runner.resources.purchaseDue(kind))continue;
+    const m=await runner.markets({fresh:true,kinds:[kind]});report.markets=m;
     const d={at:new Date().toISOString(),trigger,...purchaseDecision(m,kind)};
     try{if(d.decision==='BUY'){
       const r=await action(kind==='fuel'?'PurchaseFuel':'PurchaseCO2');
@@ -63,7 +64,7 @@ async function purchaseMarkets(trigger){
     }}catch(error){d.decision='UNVERIFIED_OR_INTERRUPTED';d.reason=/^[A-Z0-9_]+$/.test(error.message)?error.message:'PURCHASE_ACTION_FAILED';throw error;}
     finally{
     report.purchaseDecisions ||= [];report.purchaseDecisions.push(d);
-    store.event('PURCHASE_DECISION',d);appendFileSync(join(root,'reports','purchase-decisions.jsonl'),JSON.stringify(d)+'\n');console.log(JSON.stringify({event:'PURCHASE_DECISION',kind:d.kind,decision:d.decision,reason:d.reason,result:d.result,reportId:d.reportId}));save(report);
+    if(runner.resources.recordPurchaseDecision(kind,d)){store.event('PURCHASE_DECISION',d);appendFileSync(join(root,'reports','purchase-decisions.jsonl'),JSON.stringify(d)+'\n');console.log(JSON.stringify({event:'PURCHASE_DECISION',kind:d.kind,decision:d.decision,reason:d.reason,result:d.result,reportId:d.reportId}));}save(report);
     }
   }
 }
@@ -119,7 +120,7 @@ try{
     for(const a of candidates){
       if(report.verifiedDepartures.length>=maxDepartures||Date.now()>passDeadline-15000)break;
       runner.performance.counts.examined++;
-      if(runner.resources.priceDue()||runner.resources.low())await purchaseMarkets('PRICE_OR_INVENTORY_REFRESH');
+      if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k)))await purchaseMarkets('PRICE_OR_INVENTORY_REFRESH');
       snapshot.markets=await runner.markets();
       // Inspect the single priority action once; no completion polling or submission retry.
       const kind=requiredMaintenance(snapshot,a.registration,runner.holds(a.registration));
@@ -128,7 +129,7 @@ try{
         const r=await action(kind==='check'?'ACheck':'Repair',a.registration);maintenanceCount++;
         report.maintenanceActions.push({registration:a.registration,kind,result:r.result,reason:r.reason,checkpoint:r.checkpoint});
         runner.resources.observeHeader(await runner.dom('inventory'));
-        if(runner.resources.priceDue()||runner.resources.low())await purchaseMarkets('AFTER_MAINTENANCE_REFRESH');
+        if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k)))await purchaseMarkets('AFTER_MAINTENANCE_REFRESH');
         if(!applyMaintenanceUnavailable(snapshot,a.registration,kind,r))continue;
       }
       const e=departureEligibility(snapshot,a.registration,runner.holds(a.registration),null);
@@ -145,13 +146,13 @@ try{
       });
       report.fleetHeartbeat={verifiedSinceDisplay:fleetHeartbeat.verifiedSinceDisplay,...(heartbeat?{lastDisplay:{at:new Date().toISOString(),...heartbeat}}:report.fleetHeartbeat?.lastDisplay?{lastDisplay:report.fleetHeartbeat.lastDisplay}:{})};
       if(heartbeat){console.log(JSON.stringify({event:'FLEET_HEARTBEAT',...heartbeat}));save(report);}
-      if(runner.resources.priceDue()||runner.resources.low()||r.gameResponse?.eligible?.reasons?.includes('INSUFFICIENT_ROUTE_FUEL'))await purchaseMarkets('PRICE_OR_INVENTORY_REFRESH');
+      if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k))||r.gameResponse?.eligible?.reasons?.includes('INSUFFICIENT_ROUTE_FUEL'))await purchaseMarkets('PRICE_OR_INVENTORY_REFRESH');
     }
     report.aCheck=report.maintenanceActions.some(a=>a.kind==='check')?'ATTEMPTED_ELIGIBLE':'SKIPPED_NO_ELIGIBLE_AIRCRAFT_IN_BATCH';
     runner.performance.counts.deferred=candidates.length-runner.performance.counts.examined;
     stage('FLEET_CSV');
     try{report.fleetCsv=await runner.measure('fleetReport',()=>runner.measure('navigation',()=>highCycleReport(runner,{limit:pool.length>20?Math.min(csvBatch,2):csvBatch,fleetObservation:snapshot.fleet})));}catch(error){active();report.fleetCsv={result:'INCONCLUSIVE',reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'REPORT_FAILED'};}
-    stage('ENDING_REFRESH');const endingFleet=snapshot.fleet;report.endingFleet={count:endingFleet.length,byLocation:endingFleet.reduce((out,a)=>(out[a.location]=(out[a.location]||0)+1,out),{})};if(runner.resources.priceDue()||runner.resources.low())await purchaseMarkets('BATCH_END_REFRESH');report.endingMarkets=runner.resources.value;report.resourceCache={...runner.resources.metrics};
+    stage('ENDING_REFRESH');const endingFleet=snapshot.fleet;report.endingFleet={count:endingFleet.length,byLocation:endingFleet.reduce((out,a)=>(out[a.location]=(out[a.location]||0)+1,out),{})};if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k)))await purchaseMarkets('BATCH_END_REFRESH');report.endingMarkets=runner.resources.value;report.resourceCache={...runner.resources.metrics};
     await runner.measure('navigation',()=>runner.dom('showFleet'));
     report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);report.resourceCache={...runner.resources.metrics};report.performance=runner.performance.report();report.batchInventoryMetrics=Object.fromEntries(Object.entries(runner.resources.metrics).map(([k,v])=>[k,v-(cacheAtStart[k]||0)]));report.departuresPerMinute=report.durationMs?report.verifiedDepartures.length*60000/report.durationMs:0;report.status='COMPLETED_OPERATIONS_PASS';report.phase='WAITING';save(report);
     if(settings.retainPassHistory)appendFileSync(join(root,'reports','operations-history.jsonl'),JSON.stringify(report)+'\n');store.event('PRODUCTION_PASS_COMPLETED',{passId:report.passId,departures:report.verifiedDepartures,maintenance:report.maintenanceActions,purchases:report.purchases});

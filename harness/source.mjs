@@ -49,3 +49,10 @@ export function inventory(source) {
     ]
   };
 }
+
+// The default adapter still inspects both resources; scheduled calls select only due kinds.
+export function marketExpression(block,kinds){
+  if(!kinds)return block;
+  if(!kinds.length||kinds.some(k=>!['fuel','co2'].includes(k))||!block.trimEnd().endsWith('})()'))throw Error('INVALID_MARKET_SELECTION');
+  return block.trimEnd().slice(0,-2)+'('+JSON.stringify(kinds)+')';
+}
