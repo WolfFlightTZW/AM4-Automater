@@ -268,7 +268,7 @@ export class Runner {
     if (!market?.ok) throw new Error('MARKET_INCOMPLETE');
     const input = { kind, price: market.pricePer1000, capacity: market.capacityMax, holding: market.holding, cash: market.cash };
     const requested = wholeQuantity(input);
-    if (!requested || this.holds(kind).length) { report.reason = 'NO_NATURALLY_QUALIFYING_MARKET_OR_DURABLE_HOLD'; report.endingState = report.startingState; return; }
+    if (!requested) { report.reason = 'NO_NATURALLY_QUALIFYING_MARKET'; report.endingState = report.startingState; return; }
     const cost = Math.round(requested * input.price / 1000);
     report.gameResponse = { requested, cost };
     if (!this.options.live) { report.result = 'PASS'; report.reason = 'QUALIFICATION_INSPECTED_NO_PURCHASE'; report.endingState = report.startingState; return; }
@@ -278,7 +278,6 @@ export class Runner {
     // Existing template re-reads values, calculates amount, and verifies. Bind confirmation to the same quote.
     const before = await this.markets({fresh:true});
     if (!samePurchaseQuote(before[kind],market)) throw new Error('MARKET_CHANGED_AFTER_CONFIRMATION');
-    if (this.holds(kind).length) throw new Error('PURCHASE_DURABLE_HOLD');
     const action = this.store.intent({ registration: kind, kind: 'purchase', before, quote: { requested, cost, maximumDebit:Math.ceil(requested*input.price/1000) } });
     report.checkpoint = action.id; report.actionAttempted = { name: 'purchase:' + kind, submitted: 'POSSIBLE', actionId: action.id }; this.store.saveCase(report);
     // Guard wrapper binds the template's internally re-read quote/amount. The purchase body stays unchanged.

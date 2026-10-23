@@ -8,9 +8,9 @@ for(const [kind,price] of [['fuel',500],['co2',125]]){
     const m={[kind]:{ok:true,pricePer1000:price,capacityMax:10000,holding:10000-free,cash:250000000}};
     const d=purchaseDecision(m,kind);assert.equal(d.decision,'BUY');assert.equal(d.maximumUnits,free);
   });
-  test(`${kind}: log an explicit hold even when price/capacity/cash qualify`,()=>{
+  test(`${kind}: historical UNKNOWN does not veto a qualifying current purchase`,()=>{
     const m={[kind]:{ok:true,pricePer1000:price,capacityMax:4001,holding:1,cash:250000000}};
-    const d=purchaseDecision(m,kind,[{id:'synthetic-intent',state:'UNKNOWN'}]);assert.equal(d.qualifying,true);assert.equal(d.reason,'UNRESOLVED_TRANSACTION_HOLD');assert.equal(d.maximumUnits,4000);
+    const d=purchaseDecision(m,kind,[{id:'synthetic-intent',state:'UNKNOWN'}]);assert.equal(d.qualifying,true);assert.equal(d.reason,'QUALIFIED_BUY_MAXIMUM_EXACT_WHOLE_UNITS');assert.equal(d.decision,'BUY');assert.equal(d.maximumUnits,4000);
   });
 }
 test('A synthetic non-thousand-unit capacity is filled exactly',()=>{

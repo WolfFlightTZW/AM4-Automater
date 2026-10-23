@@ -1,6 +1,6 @@
 import { wholeQuantity,verifyPurchase } from './policy.mjs';
 // One common policy for fuel and CO2. There is deliberately no lot/minimum size.
-export function purchaseDecision(markets,kind,holds=[]) {
+export function purchaseDecision(markets,kind) {
   const m=markets?.[kind],ceiling=kind==='fuel'?1000:150;
   const d={kind,price:m?.pricePer1000,ceiling,cash:m?.cash,holding:m?.holding,capacity:m?.capacityMax,freeUnits:null,maximumUnits:0,qualifying:false,decision:'SKIP',reason:null};
   if(!m?.ok){d.reason='MARKET_VALUES_UNAVAILABLE';return d;}
@@ -10,7 +10,6 @@ export function purchaseDecision(markets,kind,holds=[]) {
   if(m.pricePer1000>=ceiling)d.reason='PRICE_AT_OR_ABOVE_CEILING';
   else if(d.freeUnits<1)d.reason='NO_WHOLE_UNIT_FREE_CAPACITY';
   else if(!d.maximumUnits)d.reason='CASH_RESERVE_PREVENTS_ANY_WHOLE_UNIT';
-  else if(holds.length){d.reason='UNRESOLVED_TRANSACTION_HOLD';d.holds=holds.map(h=>({id:h.id||h.key,state:h.state}));}
   else{d.decision='BUY';d.reason='QUALIFIED_BUY_MAXIMUM_EXACT_WHOLE_UNITS';}
   return d;
 }

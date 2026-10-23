@@ -72,7 +72,7 @@ export class Store {
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
   intent({ registration, kind, aircraftId, before, quote,completionObservation=false }) {
-    if (this.holds(registration,null,aircraftId).length) throw new Error('UNRESOLVED_HARNESS_ACTION');
+    if (kind !== 'purchase' && this.holds(registration,null,aircraftId).length) throw new Error('UNRESOLVED_HARNESS_ACTION');
     const action = { id: randomUUID(), registration, kind, aircraftId, before, quote,completionObservation, state: 'PENDING', scheduleSeen: false, created: new Date().toISOString() };
     this.saveAction(action); return action;
   }

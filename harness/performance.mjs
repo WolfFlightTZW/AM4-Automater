@@ -5,6 +5,7 @@ export class PassPerformance {
   report(){const navigationMs=this.timings.navigation?.durationMs||0,actionMs=Math.max(0,['departureAction','purchaseAction','maintenanceAction'].reduce((n,k)=>n+(this.timings[k]?.durationMs||0),0)-(this.timings.actionNavigation?.durationMs||0));return {navigationMs,actionMs,timings:structuredClone(this.timings),counts:{...this.counts},note:'Inclusive action durations overlap component inspection timings; do not add the categories.'};}
 }
 export function requiresRecoveryBackoff(actions,{scheduleComplete=true,maintenanceComplete=true}={}){
+  actions=actions.filter(a=>a.kind!=='purchase');
   if(!actions.length)return false;
   if(!scheduleComplete||!maintenanceComplete)return true;
   // A bounded, known aircraft maintenance uncertainty still blocks that aircraft and reserves funds.

@@ -11,7 +11,7 @@ import { Cdp } from './cdp.mjs';
 import { requiredMaintenance,departureEligibility,reconcileRecovery,applyMaintenanceUnavailable } from './policy.mjs';
 import { highCycleReport } from './fleet-report.mjs';
 import { OperatorSession } from '../operator/control.mjs';
-import { purchaseDecision,reconcilePurchase } from './purchasing.mjs';
+import { purchaseDecision } from './purchasing.mjs';
 import { settings } from './settings.mjs';
 import { waitBetweenPasses } from './cadence.mjs';
 import {PassPerformance,requiresRecoveryBackoff,defaultMaxDepartures} from './performance.mjs';
@@ -53,13 +53,8 @@ async function purchaseMarkets(trigger){
   active();runner.deadline=Date.now()+120000;
   // A purchase can change cash, so re-read immediately for each resource.
   for(const kind of ['fuel','co2']){
-    const m=await runner.markets();report.markets=m;
-    // Reconcile BOTH resources before any new spending changes the cash evidence.
-    for(const held of store.unresolved().filter(a=>a.kind==='purchase')){
-      const response=reconcilePurchase(held,m);
-      if(response){held.state='PURCHASE_VERIFIED';held.response=response;held.reconciliation={observed:new Date().toISOString(),reason:'EXACT_QUANTITY_AND_WHOLE_DOLLAR_CASH_INTERVAL'};store.saveAction(held);store.event('PURCHASE_RECONCILED',held.reconciliation);}
-    }
-    const d={at:new Date().toISOString(),trigger,...purchaseDecision(m,kind,runner.holds(kind))};
+    const m=await runner.markets({fresh:true});report.markets=m;
+    const d={at:new Date().toISOString(),trigger,...purchaseDecision(m,kind)};
     try{if(d.decision==='BUY'){
       const r=await action(kind==='fuel'?'PurchaseFuel':'PurchaseCO2');
       d.result=r.result;d.reportId=r.id;d.checkpoint=r.checkpoint;
@@ -87,8 +82,8 @@ try{
     active();if(!(runner.batchSnapshot&&kind==='departure'))await runner.guard.check();runner.verifySource();
     if((await runner.dom('browserAutomation')).length)throw new Error('BROWSER_AUTOMATION_ACTIVE');
     if(cost!=null){
-      const reserved=store.unresolved().filter(a=>['repair','check','purchase'].includes(a.kind));
-      const debit=a=>a.kind==='purchase'?(a.quote?.maximumDebit??Math.ceil(a.quote?.requested*a.before?.[a.registration]?.pricePer1000/1000)):a.quote?.cost;
+      const reserved=store.unresolved().filter(a=>['repair','check'].includes(a.kind));
+      const debit=a=>a.quote?.cost;
       if(reserved.some(a=>!Number.isSafeInteger(debit(a))))throw new Error('UNRESOLVED_FUNDS_RESERVE');
       const cash=await runner.evaluate("(()=>{const m=document.body.innerText.replace(/\\s+/g,' ').match(/\\bACCOUNT\\s*\\$\\s*([\\d,]+)/i);return JSON.stringify({cash:m?Number(m[1].replace(/,/g,'')):null});})()",'Production cash reserve');
       if(!Number.isSafeInteger(cash.cash)||cash.cash-cost-reserved.reduce((sum,a)=>sum+debit(a),0)<100000000)throw new Error('UNRESOLVED_FUNDS_RESERVE');
@@ -104,7 +99,7 @@ try{
     if(runner.resources.value)runner.resources.observeHeader(await runner.dom('inventory'));
     await purchaseMarkets('BATCH_START');
     stage('MAINTENANCE_RECONCILIATION');let snapshot=await runner.snapshot();snapshot.markets=await runner.markets();runner.batchSnapshot=snapshot;
-    for(const a of store.unresolved()){
+    for(const a of store.unresolved().filter(a=>a.kind!=='purchase')){
       if(['repair','check'].includes(a.kind)){
         const o=reconcileRecovery(a,snapshot);a.scheduleSeen ||= o.scheduleSeen;a.state=o.state;a.lastObservation=o;store.saveAction(a);
         report.maintenance.push({registration:a.registration,kind:a.kind,state:a.state,reason:o.reason});
@@ -112,7 +107,7 @@ try{
         const rows=a.aircraftId?identityRows(snapshot,a.registration,a.aircraftId).fleet:snapshot.fleet.filter(f=>f.registration===a.registration);
         if(rows.length===1&&rows[0].location==='inflightList'){a.state='DEPARTED_VERIFIED';store.saveAction(a);}
       }
-      // Unknown purchase outcomes retain only that resource's durable hold.
+      // Historical purchase outcomes are diagnostic records, not operational vetoes.
     }
     const fleetAssessment=assessFleetActivity(snapshot,reg=>runner.holds(reg));
     if(fleetAssessment.actionableAircraft>0)logFleetActivity(fleetAssessment);
@@ -163,7 +158,7 @@ try{
     completedPasses++;console.log(JSON.stringify({event:'PASS_COMPLETED',pass:completedPasses,durationMs:report.durationMs,performance:report.performance,resourceCache:report.batchInventoryMetrics,batch:report.batch,departuresPerMinute:report.departuresPerMinute,departures:report.verifiedDepartures,maintenance:report.maintenanceActions,aCheck:report.aCheck}));
     if(maxPasses&&completedPasses>=maxPasses)break;
     // Serialized passes: an unresolved transaction backs off rather than tight-looping.
-    const waitingForRecovery=requiresRecoveryBackoff(store.unresolved(),{scheduleComplete:snapshot.schedule?.complete===true,maintenanceComplete:snapshot.maintenance?.ok===true})||runner.holds('fuel').length>0||runner.holds('co2').length>0;
+    const waitingForRecovery=requiresRecoveryBackoff(store.unresolved(),{scheduleComplete:snapshot.schedule?.complete===true,maintenanceComplete:snapshot.maintenance?.ok===true});
     if(waitingForRecovery)runner.resources.invalidate();
     if(!waitingForRecovery&&!report.batch.recoveryBreak)logFleetActivity(assessFleetActivity({...snapshot,markets:runner.resources.value},reg=>runner.holds(reg)),{nextFleetCheckAt:new Date(Date.now()+cycle*1000).toISOString()});
     Object.assign(report,await waitBetweenPasses({active,recovery:waitingForRecovery,seconds:cycle}));save(report);

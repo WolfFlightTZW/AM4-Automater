@@ -43,8 +43,8 @@ test('provider filters sockets and processes; unknown TCP states remain visible'
 
 test('only isolated known maintenance uncertainty uses normal cadence; holds are unchanged',()=>{
  const a=record(),before=JSON.stringify(a);assert.equal(requiresRecoveryBackoff([a]),false);assert.equal(JSON.stringify(a),before);
- for(const b of [{...a,kind:'departure'},{...a,kind:'purchase'},{...a,aircraftId:null},{...a,quote:{}},{...a,quote:{cost:-1}}])assert.equal(requiresRecoveryBackoff([b]),true);
- assert.equal(requiresRecoveryBackoff([a],{scheduleComplete:false}),true);assert.equal(requiresRecoveryBackoff([a],{maintenanceComplete:false}),true);assert.equal(requiresRecoveryBackoff([]),false);assert.equal(requiresRecoveryBackoff([a,{...a,kind:'purchase'}]),true);
+ for(const b of [{...a,kind:'departure'},{...a,aircraftId:null},{...a,quote:{}},{...a,quote:{cost:-1}}])assert.equal(requiresRecoveryBackoff([b]),true);
+ assert.equal(requiresRecoveryBackoff([a],{scheduleComplete:false}),true);assert.equal(requiresRecoveryBackoff([a],{maintenanceComplete:false}),true);assert.equal(requiresRecoveryBackoff([]),false);assert.equal(requiresRecoveryBackoff([a,{...a,kind:'purchase'}]),false);
 });
 test('normal launcher and worker default to twenty departures, preserving bounds',()=>{assert.equal(defaultMaxDepartures,20);assert.match(readFileSync(new URL('../../Start-AM4.ps1',import.meta.url),'utf8'),/MaxDeparturesPerPass=20/);const worker=readFileSync(new URL('../production.mjs',import.meta.url),'utf8');assert.match(worker,/maxDepartures>30/);assert.match(worker,/Date.now\(\)>passDeadline-15000/);assert.match(worker,/verifiedDepartures.length>=maxDepartures/);});
 

@@ -41,7 +41,7 @@ Current production/harness entrypoints require an existing migration-validated l
 
 A failed UI read grants no eligibility. An uncertain send retains its intent and funds reservation. Schedule absence alone never means a submission failed. Complete current schedule, stable aircraft ID and restored target condition can establish RESOLVED_CURRENT_UI, distinct from proving the historical transaction completed.
 
-Fresh quotes and actual controls are bound immediately before irreversible work. The operator lease covers CDP execution; stale/expired workers cannot click. A disconnect or ownership loss invalidates resource observations and stops production. An isolated numeric-ID-bound maintenance uncertainty with a known nonnegative reserved cost blocks its target and reserves spending without fleet-wide backoff. Other unresolved actions, malformed identity/cost evidence or incomplete inspection while uncertainty remains trigger recovery backoff; legacy resource holds also trigger it.
+Fresh quotes and actual controls are bound immediately before irreversible work. The operator lease covers CDP execution; stale/expired workers cannot click. A disconnect or ownership loss invalidates resource observations and stops production. An isolated numeric-ID-bound maintenance uncertainty with a known nonnegative reserved cost blocks its target and reserves spending without fleet-wide backoff. Other unresolved aircraft actions, malformed aircraft identity/cost evidence or incomplete aircraft inspection while uncertainty remains trigger recovery backoff; historical resource records do not trigger it.
 
 ## Observation reuse
 
@@ -59,7 +59,7 @@ Historical scripts and task-scoped development sessions under `archive/` are not
 
 | Collection | Reason to retain | Bound / default |
 |---|---|---|
-| Pending/uncertain target intent and recovery evidence | Prevent duplicate irreversible actions and reserve uncertain spending | Never prune unresolved evidence |
+| Pending/uncertain target intent and recovery evidence | Aircraft duplicate protection; resource transaction diagnostics | Never prune unresolved evidence |
 | Acknowledged/completed action summaries | Requested local action-outcome report | 10,000 non-uncertain records |
 | Compact case summaries | Bounded test/action-result diagnostics | 500 records; no full snapshots |
 | SQLite event stream | Specific diagnostic only | Off unless diagnosticReason is supplied; 2,000 events, 2 KiB each |
@@ -78,3 +78,5 @@ Concurrency uses current process and TCP-owner evidence rather than counts of un
 Windows cannot prove that every hidden idle elevated script is unrelated, and external clients can connect after an observation. This limitation and the proportionate layered protection are documented in operator/README.md. Stronger guarantees would require privileged monitoring/access enforcement; they are not claimed by this implementation.
 
 Performance data is a single overwritten pass report, not a retained event stream. Timings are inclusive and overlap. See DESIGN.md for cadence classification, identity binding and immediate-observation reuse.
+
+Resource transaction records are diagnostic evidence, not persistent purchase holds. Store.intent admits a new purchase independently of historical resource records; aircraft hold admission is unchanged. Production reads a fresh market observation per resource decision, and the existing Runner/template freshly binds and verifies the current transaction. Historical purchases are excluded from automatic reconciliation, funds reservations and recovery backoff. No new persistent state, broker, retry queue or parallel resource ledger is introduced.
