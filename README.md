@@ -1,5 +1,7 @@
 # AM4 Automater
 
+**Independent forecast dashboard:** double-click `Start-AM4-Forecast.cmd` to monitor public fuel/CO2 forecasts while operating the game manually. It starts no production controller or CDP connection. See [console instructions](harness/FORECAST-CONSOLE.md). Stop with Ctrl+C.
+
 One background Node.js controller operates the existing Steam AM4 session through CefSharp CDP. It does not use desktop input, steal focus, open a browser, or log in again.
 
 ## Start and stop

@@ -1,5 +1,7 @@
 # AM4Info resource advisories
 
+For an independent continuously updated console while operating AM4 manually, use `Start-AM4-Forecast.cmd`. See [FORECAST-CONSOLE.md](FORECAST-CONSOLE.md) for commands, quantity configuration, local history and shutdown. It starts no controller or CDP connection.
+
 Implemented as advisory-only source integration. It never purchases, defers a production purchase, overrides price ceilings or reserve, changes a resource-cache deadline, or adds a transaction hold. AM4 remains authoritative. The running worker must be restarted through the normal controlled operator procedure to load newly installed source; implementation/testing alone does not deploy it.
 
 ## Retrieval
