@@ -11,6 +11,7 @@ import { readProductionHolds } from './store.mjs';
 import { OperatorSession } from '../operator/control.mjs';
 import { ResourceCache } from './resource-cache.mjs';
 import { settings } from './settings.mjs';
+import {notifyForecast} from './forecast-monitor.mjs';
 import {samePurchaseQuote} from './purchasing.mjs';
 import {validAircraftId,identityRows,excludedAircraft} from './identity.mjs';
 
@@ -49,7 +50,7 @@ export class Runner {
   measure(name,operation){if(!this.performance)return operation();return name==='navigation'&&this.actionInProgress?this.performance.measure('actionNavigation',()=>this.performance.measure(name,operation)):this.performance.measure(name,operation);}
   async markets({fresh=false,kinds}={}) {
     try{this.operator?.assertCanCommit();}catch(error){this.resources.invalidate();throw error;}
-    return this.resources.read(requestedKinds=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(marketExpression(this.source.blocks.marketJs,requestedKinds),'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);return value;}),{fresh,kinds});
+    return this.resources.read(requestedKinds=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(marketExpression(this.source.blocks.marketJs,requestedKinds),'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);notifyForecast(this.forecast,'observeMarkets',value);return value;}),{fresh,kinds});
   }
   async fleet() { const rows=await this.measure('fleetScan',()=>this.evaluate(this.source.blocks.fleetJs,'source.fleetJs'));this.aircraftIds.clear();for(const a of rows){if(validAircraftId(a.aircraftId)&&rows.filter(r=>r.registration===a.registration).length===1)this.aircraftIds.set(a.registration,a.aircraftId);if(a.registration==='N-145'&&validAircraftId(a.aircraftId))this.excludedIds.add(a.aircraftId);}return rows; }
   async snapshot({ markets = false } = {}) {
@@ -252,7 +253,8 @@ export class Runner {
           Object.assign(this.batchSnapshot.fleet.find(a=>a.aircraftId===aircraftId),observed.rows[0]);
           let proof=observed;
           for(let followup=0;followup<3&&!this.resources.debitReady(beforeReceipt,proof);followup++){await this.pause(150);proof=await this.dom('receipt');}
-          report.gameResponse.inventoryAccounted=this.resources.debit(beforeReceipt,proof);break;
+          report.gameResponse.inventoryAccounted=this.resources.debit(beforeReceipt,proof);
+          if(report.gameResponse.inventoryAccounted)notifyForecast(this.forecast,'recordConsumption',proof.receipt);break;
         }
       }else{
         const fleet=await this.fleet();report.endingState={fleet};const rows=fleet.filter(r=>r.aircraftId===aircraftId);

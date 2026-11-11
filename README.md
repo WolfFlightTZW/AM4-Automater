@@ -70,3 +70,7 @@ The Alaska-time filename is `Reports/TodaySnapshot-YYYYMMDD-HHMMSS.csv`. A struc
 If a panel is unavailable, the command may publish a separate `.INCOMPLETE.csv` with one row per enumerated aircraft, explicit inspection errors and `snapshotComplete=false`. Missing Details stay blank. This is never a completed snapshot or a substitute for the missing inspection; the normal completed CSV is withheld.
 
 Resource purchasing schedules each resource independently, using its displayed price-update countdown and observed inventory. A due decision uses fresh AM4 values and the enabled Purchase control. Historical UNKNOWN purchase records remain diagnostic evidence and do not veto a new qualifying fuel/CO2 purchase or reserve cash. Each current submission is clicked once and verified; ambiguous responses are not replayed. See DESIGN.md for the unchanged limits and current-response handling.
+
+## AM4Info forecast advisories
+
+The optional resource forecast monitor is advisory-only: it cannot purchase or defer game purchases. See [harness/FORECAST.md](harness/FORECAST.md) for the public endpoint, configuration, compact local reports, confidence limits and `node harness/forecast-command.mjs` read-only check. Existing production price/countdown and purchasing policies remain unchanged.

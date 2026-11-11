@@ -12,6 +12,7 @@ import { requiredMaintenance,departureEligibility,reconcileRecovery,applyMainten
 import { highCycleReport } from './fleet-report.mjs';
 import { OperatorSession } from '../operator/control.mjs';
 import { purchaseDecision } from './purchasing.mjs';
+import {ForecastMonitor,notifyForecast} from './forecast-monitor.mjs';
 import { settings } from './settings.mjs';
 import { waitBetweenPasses } from './cadence.mjs';
 import {PassPerformance,requiresRecoveryBackoff,defaultMaxDepartures} from './performance.mjs';
@@ -41,6 +42,7 @@ async function action(scenario,registration){
   report.activeAction={scenario,registration};save(report);
   let r;runner.actionInProgress=true;
   try{r=await runner.measure(scenario==='Departure'?'departureAction':/^Purchase/.test(scenario)?'purchaseAction':'maintenanceAction',()=>runner.execute(scenario));}finally{runner.actionInProgress=false;}
+  if(scenario==='Departure')notifyForecast(runner.forecast,'observeDeparture',r.gameResponse);
   report.performance=runner.performance.report();
   report.actions.push({scenario,registration,id:r.id,checkpoint:r.checkpoint,result:r.result,reason:r.reason,submitted:r.actionAttempted?.submitted,inventoryAccounted:r.gameResponse?.inventoryAccounted,inventoryIssue:runner.resources.lastIssue});
   if(r.checkpoint){const a=store.get(r.checkpoint);report.actions.at(-1).state=a.state;}
@@ -69,6 +71,8 @@ async function purchaseMarkets(trigger){
   }
 }
 try{
+  runner.forecast=new ForecastMonitor({directory:join(root,'reports'),...settings.forecastAdvisory,log:event=>console.log(JSON.stringify(event))});
+  await runner.forecast.initialize();notifyForecast(runner.forecast,'tick');
   runner.operator=new OperatorSession(join(root,'operator','state'),'AUTOMATIC');
   const guardOptions={ignoreControllerPids:[process.ppid]};
   for(let attempt=0;;attempt++){
@@ -92,6 +96,7 @@ try{
     store.event('PRODUCTION_POLICY_AUTHORIZED',{kind,target,cost,cashReserve:100000000});runner.budget--;return true;
   };
   while(!maxPasses||completedPasses<maxPasses){
+    notifyForecast(runner.forecast,'tick');
     active();const passDeadline=Date.now()+passSeconds*1000;runner.performance=new PassPerformance();const cacheAtStart={...runner.resources.metrics};
     report={passId:randomUUID(),started:new Date().toISOString(),status:'RUNNING',phase:'STARTING',mode:'AUTOMATIC',fleetHeartbeat:{verifiedSinceDisplay:fleetHeartbeat.verifiedSinceDisplay},actions:[],maintenance:[],held:[],verifiedDepartures:[],purchases:[],maintenanceActions:[]};save(report);
     console.log(JSON.stringify({event:'PASS_STARTED',passId:report.passId,pass:completedPasses+1}));
@@ -148,6 +153,7 @@ try{
       if(heartbeat){console.log(JSON.stringify({event:'FLEET_HEARTBEAT',...heartbeat}));save(report);}
       if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k))||r.gameResponse?.eligible?.reasons?.includes('INSUFFICIENT_ROUTE_FUEL'))await purchaseMarkets('PRICE_OR_INVENTORY_REFRESH');
     }
+    notifyForecast(runner.forecast,'update',{markets:runner.resources.value,context:{candidateCount:candidates.length,resourceBlockedCandidates:report.held.filter(h=>h.reasons?.some(r=>['DISPATCH_RESOURCE_GATE','INSUFFICIENT_ROUTE_FUEL'].includes(r))&&h.reasons.every(r=>['DISPATCH_RESOURCE_GATE','INSUFFICIENT_ROUTE_FUEL','FLIGHT_DURATION_UNKNOWN'].includes(r))).length,confirmedEnabledDepartures:null}});
     report.aCheck=report.maintenanceActions.some(a=>a.kind==='check')?'ATTEMPTED_ELIGIBLE':'SKIPPED_NO_ELIGIBLE_AIRCRAFT_IN_BATCH';
     runner.performance.counts.deferred=candidates.length-runner.performance.counts.examined;
     stage('FLEET_CSV');

@@ -80,3 +80,7 @@ Windows cannot prove that every hidden idle elevated script is unrelated, and ex
 Performance data is a single overwritten pass report, not a retained event stream. Timings are inclusive and overlap. See DESIGN.md for cadence classification, identity binding and immediate-observation reuse.
 
 Resource transaction records are diagnostic evidence, not persistent purchase holds. Store.intent admits a new purchase independently of historical resource records; aircraft hold admission is unchanged. Production reads a fresh observation for each due resource decision, and the existing Runner/template freshly binds and verifies the current transaction. Historical purchases are excluded from automatic reconciliation, funds reservations and recovery backoff. No new persistent state, broker, retry queue or parallel resource ledger is introduced.
+
+## Advisory resource forecasting
+
+`forecast.mjs` independently retrieves and normalizes AM4Info public JSON and compares pre-transition predictions with fresh game-price observations. `forecast-monitor.mjs` coalesces asynchronous HTTP, bounds local comparison reports, and accepts exception-isolated observational Runner hooks. `forecast-planner.mjs` is pure advisory arithmetic; it has no action capability. `forecast-command.mjs` performs a public retrieval with existing local report context, without CDP. The production loop does not await forecast HTTP or change resource-cache deadlines. See [FORECAST.md](FORECAST.md) for cadence, persistence, configuration and confidence rules.
