@@ -12,9 +12,9 @@ const header=(f=2000000,c=2000000,cap=4000000)=>({fuel:f,cash:300000000,co2Perce
 const proof=(f,c,v=0,routes=1,fuel=1000,co2=2000)=>({epoch:1,versions:{fuel:v,co2:v},receipt:{fuel,co2,routes},header:header(f,c)});
 const snapshot=(kind)=>{const fleet=[101,102].map(id=>({aircraftId:String(id),registration:'TEST-'+id,status:'landed',location:'landedList',grounded:'0',wear:kind==='repair'?25:0}));return {fleet,maintenance:{ok:true,records:fleet.map(a=>({id:a.aircraftId,registration:a.registration,wear:a.wear,hoursToCheck:kind==='check'?15:200,availableActions:kind?[kind]:[]}))},schedule:{complete:true,entries:[]},markets:markets()};};
 test('twenty exact receipt debits never trigger top-up screens with sufficient inventory, even at qualifying prices',async()=>{
- let now=0,reads=0;const c=new ResourceCache({now:()=>now});c.batch=true;await c.read(async()=>{reads++;return markets();});c.beginDispatch(20);
- for(let i=0;i<20;i++){assert.equal(c.purchaseDue('fuel'),false);assert.equal(c.purchaseDue('co2'),false);assert.equal(c.debit(proof(2000000-i*1000,2000000-i*2000,i),proof(1999000-i*1000,1998000-i*2000,i+1)),true);await c.read(async()=>{reads++;return markets();});now+=1000;}
- assert.equal(reads,1);assert.equal(c.metrics.receiptDebits,20);assert.equal(c.value.fuel.holding,1980000);c.endDispatch();assert.equal(c.purchaseDue('fuel'),true,'batch boundary can buy the maximum again');
+ let now=0,reads=0;const c=new ResourceCache({now:()=>now});c.batch=true;await c.read(async()=>{reads++;return markets(4000000);});c.beginDispatch(20);
+ for(let i=0;i<20;i++){assert.equal(c.purchaseDue('fuel'),false);assert.equal(c.purchaseDue('co2'),false);assert.equal(c.debit(proof(4000000-i*1000,4000000-i*2000,i),proof(3999000-i*1000,3998000-i*2000,i+1)),true);await c.read(async()=>{reads++;return markets(4000000);});now+=1000;}
+ assert.equal(reads,1);assert.equal(c.metrics.receiptDebits,20);assert.equal(c.value.fuel.holding,3980000);c.endDispatch();assert.equal(c.purchaseDue('fuel'),true,'batch boundary can buy the maximum again');
 });
 test('low/uncertain inventory, actual price changes and external changes trigger a meaningful refresh',async()=>{
  let now=0;const c=new ResourceCache({now:()=>now});c.batch=true;const m=markets(80000);await c.read(async()=>m);c.usage.fuel=10000;c.beginDispatch(8);assert.equal(c.purchaseDue('fuel'),true);
@@ -89,3 +89,13 @@ test('new arrivals between assessment and native scope trigger one current maint
  const result=await bulkDeparture(f.r,f.s,initial);assert.equal(result.result,'PASS');assert.equal(result.verified.length,3);assert.equal(refreshed,1);assert.equal(f.clicks(),1);
  }finally{f.close();}
 });
+test('sufficient inventory stays deferred across small cohorts and idle passes, but a new real price window is actionable',async()=>{
+ let now=0;const c=new ResourceCache({now:()=>now});c.batch=true;await c.read(async()=>markets(4000000));c.beginDispatch(2);
+ assert.equal(c.debit(proof(4000000,4000000),{...proof(3999000,3998000,1),header:header(3999000,3998000)}),true);
+ c.beginDispatch(0);assert.equal(c.purchaseDue('fuel'),false);c.beginDispatch(2);assert.equal(c.purchaseDue('co2'),false);
+ now=1200000;await c.read(async()=>{const m=markets();m.fuel.holding=3999000;m.co2.holding=3998000;return m;});assert.equal(c.purchaseDue('fuel'),true);
+});
+test('idle production phase does not navigate to a nonexistent Depart control',()=>{
+ const code=readFileSync(new URL('../production.mjs',import.meta.url),'utf8');assert.match(code,/if\(eligibleCandidates\.length\)await runner\.dom\('showRoutes'\)/);
+});
+

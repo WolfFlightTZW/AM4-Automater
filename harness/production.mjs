@@ -102,7 +102,7 @@ try{
     report={passId:randomUUID(),started:new Date().toISOString(),status:'RUNNING',phase:'STARTING',mode:'AUTOMATIC',fleetHeartbeat:{verifiedSinceDisplay:fleetHeartbeat.verifiedSinceDisplay},actions:[],maintenance:[],held:[],verifiedDepartures:[],purchases:[],maintenanceActions:[]};save(report);
     console.log(JSON.stringify({event:'PASS_STARTED',passId:report.passId,pass:completedPasses+1}));
     stage('FLEET_ASSESSMENT');
-    runner.resources.endDispatch();runner.batchSnapshot=null;
+    runner.batchSnapshot=null;
     let snapshot=await runner.snapshot();runner.batchSnapshot=snapshot;
     for(const a of store.unresolved().filter(a=>a.kind!=='purchase')){
       if(['repair','check'].includes(a.kind)){
@@ -154,11 +154,11 @@ try{
       }
       eligibleCandidates.push(a);
     }
-    stage('RESOURCE_READINESS');
+    stage('RESOURCE_READINESS');runner.resources.beginDispatch(eligibleCandidates.length);
     if(runner.resources.value)runner.resources.observeHeader(await runner.dom('inventory'));
     snapshot.markets=await runner.markets();await purchaseMarkets('BATCH_RESOURCE_READINESS');snapshot.markets=runner.resources.value;
     runner.resources.beginDispatch(eligibleCandidates.length);
-    await runner.dom('showRoutes');stage('FLEET_DISPATCH');
+    if(eligibleCandidates.length)await runner.dom('showRoutes');stage('FLEET_DISPATCH');
     let usedBulk=false;
     if(eligibleCandidates.length>=1&&maxDepartures>0&&Date.now()<passDeadline-15000){
       const r=await action('BulkDeparture',null,()=>bulkDeparture(runner,snapshot,eligibleCandidates));
@@ -196,7 +196,7 @@ try{
     runner.performance.counts.deferred=candidates.length-runner.performance.counts.examined;
     stage('FLEET_CSV');
     try{report.fleetCsv=await runner.measure('fleetReport',()=>runner.measure('navigation',()=>highCycleReport(runner,{limit:pool.length>20?Math.min(csvBatch,2):csvBatch,fleetObservation:snapshot.fleet})));}catch(error){active();report.fleetCsv={result:'INCONCLUSIVE',reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'REPORT_FAILED'};}
-    stage('ENDING_REFRESH');runner.resources.observeHeader(await runner.dom('inventory'));const endingFleet=snapshot.fleet;report.endingFleet={count:endingFleet.length,byLocation:endingFleet.reduce((out,a)=>(out[a.location]=(out[a.location]||0)+1,out),{})};if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k)))await purchaseMarkets('BATCH_END_REFRESH');runner.resources.endDispatch();report.endingMarkets=runner.resources.value;report.resourceCache={...runner.resources.metrics};
+    stage('ENDING_REFRESH');runner.resources.observeHeader(await runner.dom('inventory'));const endingFleet=snapshot.fleet;report.endingFleet={count:endingFleet.length,byLocation:endingFleet.reduce((out,a)=>(out[a.location]=(out[a.location]||0)+1,out),{})};if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k)))await purchaseMarkets('BATCH_END_REFRESH');report.endingMarkets=runner.resources.value;report.resourceCache={...runner.resources.metrics};
     await runner.measure('navigation',()=>runner.dom('showFleet'));
     report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);report.resourceCache={...runner.resources.metrics};report.batch.backlogAfterObserved=snapshot.fleet.filter(a=>['landedList','parkedList'].includes(a.location)).length;report.batch.verifiedBacklogReduction=report.verifiedDepartures.length;report.performance=runner.performance.report();report.batchInventoryMetrics=Object.fromEntries(Object.entries(runner.resources.metrics).map(([k,v])=>[k,v-(cacheAtStart[k]||0)]));report.departuresPerMinute=report.durationMs?report.verifiedDepartures.length*60000/report.durationMs:0;report.status='COMPLETED_OPERATIONS_PASS';report.phase='WAITING';save(report);
     if(settings.retainPassHistory)appendFileSync(join(root,'reports','operations-history.jsonl'),JSON.stringify(report)+'\n');store.event('PRODUCTION_PASS_COMPLETED',{passId:report.passId,departures:report.verifiedDepartures,maintenance:report.maintenanceActions,purchases:report.purchases});
@@ -214,7 +214,7 @@ try{
   if(!runner.operator&&reason==='INTERFACE_ALREADY_OWNED_OR_UNCERTAIN'){
     console.log(JSON.stringify({event:'START_IGNORED',reason:'CONTROLLER_ALREADY_RUNNING_OR_INTERFACE_RESERVED'}));
   }else{
-  report ||= {started:new Date().toISOString(),actions:[]};report.status=reason.startsWith('OPERATOR_')?'STOPPED_OPERATOR_PAUSED':'STOPPED_SAFELY';report.reason=reason;if(runner.performance)report.performance=runner.performance.report();if(error.processDiagnostics)report.processDiagnostics=error.processDiagnostics;report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);save(report);
+  report ||= {started:new Date().toISOString(),actions:[]};report.status=reason.startsWith('OPERATOR_')?'STOPPED_OPERATOR_PAUSED':'STOPPED_SAFELY';report.reason=reason;if(error.rendererDescription)report.rendererDescription=error.rendererDescription;if(runner.performance)report.performance=runner.performance.report();if(error.processDiagnostics)report.processDiagnostics=error.processDiagnostics;report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);save(report);
   console.log(JSON.stringify({event:'CONTROLLER_STOPPED',reason}));if(!reason.startsWith('OPERATOR_'))process.exitCode=2;
   }
 }finally{

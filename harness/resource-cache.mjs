@@ -15,8 +15,10 @@ export class ResourceCache {
   dispatchPurchaseDue(kind,required=0){
     if(this.marketDue(kind))return true;
     const m=this.value?.[kind];if(!m?.ok)return true;
+    if(m.holding>=m.capacityMax)return false;
     if(m.pricePer1000>=(kind==='fuel'?1000:150))return this.decisions[kind]?.price!==m.pricePer1000;
-    return m.holding<m.capacityMax&&m.holding<this.resourceBudget(kind,required);
+    if(this.decisions[kind]?.price!==m.pricePer1000||this.decisions[kind]?.window!==Math.round(m.priceValidUntil/60000))return true;
+    return m.holding<this.resourceBudget(kind,required);
   }
   purchaseKey(kind){const m=this.value?.[kind];return m?JSON.stringify([m.pricePer1000,m.holding,m.capacityMax,m.cash]):null;}
   purchaseDue(kind){
@@ -27,7 +29,7 @@ export class ResourceCache {
     return this.decisions[kind]?.key!==this.purchaseKey(kind);
   }
   recordPurchaseDecision(kind,d){
-    this.decisions[kind]={key:this.purchaseKey(kind),price:this.value?.[kind]?.pricePer1000};
+    this.decisions[kind]={key:this.purchaseKey(kind),price:this.value?.[kind]?.pricePer1000,window:Math.round(this.value?.[kind]?.priceValidUntil/60000)};
     const key=JSON.stringify([d.decision,d.reason,d.price,d.holding,d.capacity,...(d.reason==='CASH_RESERVE_PREVENTS_ANY_WHOLE_UNIT'?[d.cash]:[])]);
     const changed=d.decision!=='SKIP'||this.logKeys[kind]!==key;this.logKeys[kind]=key;return changed;
   }
@@ -82,5 +84,5 @@ export class ResourceCache {
     this.value.ok=['fuel','co2'].every(k=>this.value[k]?.ok);
     return structuredClone(this.value);
   }
-  setDeadline(kind){const m=this.value[kind],seconds=m.nextRefreshSeconds;m.priceValidUntil=this.now()+(m.ok&&Number.isInteger(seconds)&&seconds>0?seconds*1000:this.unreliableTimerRetryMs);}
+  setDeadline(kind){const m=this.value[kind],seconds=m.nextRefreshSeconds;m.priceValidUntil=this.now()+(m.ok&&Number.isInteger(seconds)&&seconds>0?seconds*1000:this.unreliableTimerRetryMs);if(m.ok&&m.holding>=m.capacityMax)this.decisions[kind]={key:this.purchaseKey(kind),price:m.pricePer1000,window:Math.round(m.priceValidUntil/60000)};}
 }

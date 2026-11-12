@@ -12,6 +12,8 @@ Implemented source; live acceptance remains distinct from offline tests. Install
 
 ## Native actions
 
+Idle batches remain on Fleet; they never wait for a Depart button that is hidden when no aircraft are ready. The working resource budget remains active across small cohorts and idle passes. A new displayed game-price window, low stock margin or uncertainty makes purchasing due; a small capacity change alone does not. The existing exact whole-unit quantity, price ceilings, reserve guard and current transaction verification are unchanged. The integrated forecast never triggers a purchase.
+
 The operator's latest explicit clarification supersedes the earlier inclusive threshold wording: **A-check <20 hours; repair >20% wear**. Exactly twenty is not selected. The Node policy and final individual guard use these strict boundaries as well, so fallback does not accidentally undo the native filters.
 
 Bulk A-check discovers the visible `Bulk A-Check` control. After its panel loads, `.opa-check[data-id]` cards bind current aircraft IDs; the actual remaining-hour field must be below twenty. Cards at twenty or above are never selected. Existing exclusion, schedule, identity and uncertainty checks still apply. The visible `bulk-check-btn` and `dataCost` quote are rechecked before the native submit.
