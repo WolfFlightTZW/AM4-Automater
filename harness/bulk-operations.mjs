@@ -40,7 +40,15 @@ export async function bulkMaintenance(r,snapshot,targets,kind){
 }
 export async function bulkDeparture(r,snapshot,targets){
   const routes=await r.dom('showRoutes',[{refresh:true}]);if(!routes.ok)return fallback(routes.reason);
-  const capability=await read(r,'inspect');if(capability.departureControls!==1)return fallback('BULK_DEPARTURE_CONTROL_UNAVAILABLE');
+  let capability=await read(r,'inspect');if(capability.departureControls!==1)return fallback('BULK_DEPARTURE_CONTROL_UNAVAILABLE');
+  // Arrivals can change the native group while the initial maintenance/resource preparation runs.
+  // Refresh only at this meaningful change, once; never chase a moving group indefinitely.
+  const originalLanded=snapshot.fleet.filter(a=>a.location==='landedList'&&a.grounded==='0');
+  if(capability.departureCount!==originalLanded.length){
+    snapshot.fleet=await r.fleet();await r.nav('plan');snapshot.maintenance=await r.dom('maintenance');
+    await r.dom('showRoutes',[{refresh:true}]);capability=await read(r,'inspect');
+    if(capability.departureControls!==1)return fallback('BULK_DEPARTURE_CONTROL_UNAVAILABLE');
+  }
   const routeIds=capability.departureRouteIds,landed=snapshot.fleet.filter(a=>a.location==='landedList'&&a.grounded==='0');
   if(!routeIds?.length||routeIds.length!==capability.departureCount)return fallback('BULK_DEPARTURE_SCOPE_NOT_BOUND');
   if(landed.length===routeIds.length)targets=landed;

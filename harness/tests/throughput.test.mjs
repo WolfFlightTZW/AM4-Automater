@@ -82,3 +82,10 @@ test('bulk commit uses the existing irreversible lease; pause allows verificatio
  await cdp.evaluate('JSON.stringify({})','DOM.bulk.departureState');await assert.rejects(cdp.evaluate('JSON.stringify({})','DOM.commitBulk.departureCommit'),/OPERATOR_PAUSE/);assert.equal(commands,2);operator.end('RETURNED');operator.close();assert.equal(control.status().safeToUseGame,true);
  }finally{operator?.close();control?.close();rmSync(directory,{recursive:true,force:true});}
 });
+test('new arrivals between assessment and native scope trigger one current maintenance refresh then join the verified group',async()=>{
+ const f=runnerFixture();try{const initial=[...f.s.fleet],updated=[...initial,{...initial[0],aircraftId:'103',registration:'TEST-103'}];let refreshed=0;f.r.fleet=async()=>updated;f.r.nav=async view=>{if(view==='plan')refreshed++;};
+ const dom=f.r.dom;f.r.dom=async(method,...args)=>method==='maintenance'?{ok:true,records:updated.map(a=>({id:a.aircraftId,registration:a.registration,wear:0,hoursToCheck:200,availableActions:[]}))}:method==='receipt'?(f.clicks()?proof(1997000,1994000,1,3,3000,6000):proof(2000000,2000000)):dom(method,...args);
+ const evaluate=f.r.evaluate;f.r.evaluate=(e,label)=>label==='DOM.bulk.inspect'?Promise.resolve({departureControls:1,departureRouteIds:['501','502','503'],departureCount:3}):evaluate(e,label);
+ const result=await bulkDeparture(f.r,f.s,initial);assert.equal(result.result,'PASS');assert.equal(result.verified.length,3);assert.equal(refreshed,1);assert.equal(f.clicks(),1);
+ }finally{f.close();}
+});
