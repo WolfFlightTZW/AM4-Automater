@@ -4,10 +4,11 @@ const normalized=s=>s.trim().toLowerCase().replace(/[.#]/g,'').replace(/\s+/g,' 
 const text=(v,max=2000)=>typeof v==='string'&&v.length<=max?v.trim():null;
 export function parseAchievementCapture(data){
   if(!data||data.version!==1||data.source!=='AM4_UI'||!Number.isFinite(Date.parse(data.collectedAt))||typeof data.complete!=='boolean'||!Array.isArray(data.achievements)||data.achievements.length>500)throw Error('INVALID_ACHIEVEMENT_CAPTURE');
-  const names=new Set(),ids=new Set();
+  const names=new Map(),ids=new Set();
   return {collectedAt:data.collectedAt,complete:data.complete,source:'AM4_UI',achievements:data.achievements.map(raw=>{
     const name=text(raw.name,120),gameId=raw.gameId===null||raw.gameId===undefined?null:text(raw.gameId,120);
-    if(!name||names.has(normalized(name))||(gameId&&ids.has(gameId)))throw Error('AMBIGUOUS_ACHIEVEMENT_IDENTITY');names.add(normalized(name));if(gameId)ids.add(gameId);
+    const previous=name?names.get(normalized(name)):undefined;
+    if(!name||(previous!==undefined&&(!previous||!gameId))||(gameId&&ids.has(gameId)))throw Error('AMBIGUOUS_ACHIEVEMENT_IDENTITY');names.set(normalized(name),gameId);if(gameId)ids.add(gameId);
     const fields=Object.fromEntries(['completionText','rewardText','requirementText','progressText','evidence'].map(k=>[k,text(raw[k])||'']));
     if(!fields.evidence)throw Error('ACHIEVEMENT_EVIDENCE_REQUIRED');
     const state=normalized(fields.completionText),completed=state==='completed'?true:['not completed','incomplete'].includes(state)?false:null;
@@ -17,9 +18,9 @@ export function parseAchievementCapture(data){
   })};
 }
 export function achievementInventory(capture=null){
-  const byName=new Map((capture?.achievements||[]).map(r=>[normalized(r.name),r]));
-  const inventory=achievementCatalog.map(c=>{const actual=byName.get(normalized(c.name));if(actual)byName.delete(normalized(c.name));return {...c,...actual,observed:Boolean(actual),source:actual?'AM4_UI':'COMMUNITY_CATALOG_ONLY',collectedAt:actual?.collectedAt??null};});
-  for(const actual of byName.values())inventory.push({catalogId:null,category:'UNCLASSIFIED',communityBP:null,effort:'Needs review.',...actual,observed:true});
+  const actualRows=capture?.achievements||[],used=new Set(),inventory=[];
+  for(const c of achievementCatalog){const matches=actualRows.filter(r=>normalized(r.name)===normalized(c.name));if(matches.length>1)continue;const actual=matches[0];if(actual)used.add(actual);inventory.push({...c,...actual,observed:Boolean(actual),source:actual?'AM4_UI':'COMMUNITY_CATALOG_ONLY',collectedAt:actual?.collectedAt??null});}
+  for(const actual of actualRows.filter(r=>!used.has(r)))inventory.push({catalogId:null,category:'UNCLASSIFIED',communityBP:null,effort:'Needs review.',...actual,observed:true});
   return inventory;
 }
 export function achievementReport({capture=null,balance=null,target=null,now=Date.now()}={}){
