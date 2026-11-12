@@ -26,7 +26,7 @@ function unavailable(s,kind='check'){
 const production=readFileSync(new URL('../production.mjs',import.meta.url),'utf8');
 async function productionBranch(s,result){
  let calls=0;
- const code=production.slice(production.indexOf('      const kind=requiredMaintenance('),production.indexOf('      const e=departureEligibility('));
+ const code=production.slice(production.indexOf('      const kind=requiredMaintenance('),production.indexOf('      eligibleCandidates.push(a);'));
  const context={snapshot:s,a:s.fleet[0],maintenanceChoice,requiredMaintenance,applyMaintenanceUnavailable,maintenanceCount:0,maxMaintenance:20,report:{held:[],maintenanceActions:[]},
  runner:{holds:()=>[],performance:{counts:{skipped:0}},resources:{observeHeader(){},purchaseDue:()=>false,priceDue:()=>false,low:()=>false},dom:async()=>({})},
  action:async(scenario,reg)=>{calls++;return typeof result==='function'?result(scenario,reg):result;},purchaseMarkets:async()=>{throw Error('UNEXPECTED_MARKET');}};

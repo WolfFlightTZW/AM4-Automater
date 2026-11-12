@@ -84,3 +84,7 @@ Resource transaction records are diagnostic evidence, not persistent purchase ho
 ## Advisory resource forecasting
 
 `forecast.mjs` independently retrieves and normalizes AM4Info public JSON and compares pre-transition predictions with fresh game-price observations. `forecast-monitor.mjs` coalesces asynchronous HTTP, bounds local comparison reports, and accepts exception-isolated observational Runner hooks. `forecast-planner.mjs` is pure advisory arithmetic; it has no action capability. `forecast-command.mjs` performs a public retrieval with existing local report context, without CDP. The production loop does not await forecast HTTP or change resource-cache deadlines. See [FORECAST.md](FORECAST.md) for cadence, persistence, configuration and confidence rules.
+
+## Batch throughput
+
+`bulk-dom.mjs` discovers and operates observed native controls, including dropdown/card selection; it does not call inferred endpoints. `bulk-operations.mjs` coordinates these controls with existing policy, operator leases, guards, per-target durable intents and result verification. Production groups maintenance before resource readiness and dispatch. `resource-cache.mjs` coalesces sufficient-stock batch decisions while preserving price expiry, exact receipt debits and exceptional invalidation. `benchmark-throughput.mjs` replays the real purchase coordinator offline; modeled timing must not be presented as live throughput. Details: [THROUGHPUT.md](THROUGHPUT.md).

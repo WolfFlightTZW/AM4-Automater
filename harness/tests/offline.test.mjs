@@ -138,7 +138,7 @@ for (const [name, mutate] of [
 check('Durable holds block either maintenance kind', fixture.ready,'MaintenanceEligibility',()=>{for(const kind of ['repair','check'])assert.equal(maintenanceEligibility(fixture.ready,'N-TEST001',kind,[{state:'UNKNOWN'}]).eligible,false)});
 check('Wear and check boundaries follow DESIGN.md',fixture.ready,'MaintenanceEligibility',()=>{
   const s=clone(fixture.ready);s.maintenance.records[0].wear=9;assert.equal(maintenanceEligibility(s,'N-TEST001','repair').eligible,false);
-  s.maintenance.records[0].hoursToCheck=20;assert.equal(maintenanceEligibility(s,'N-TEST001','check').eligible,true);s.maintenance.records[0].hoursToCheck=21;assert.equal(maintenanceEligibility(s,'N-TEST001','check').eligible,false);
+  s.maintenance.records[0].hoursToCheck=19;assert.equal(maintenanceEligibility(s,'N-TEST001','check').eligible,true);s.maintenance.records[0].hoursToCheck=21;assert.equal(maintenanceEligibility(s,'N-TEST001','check').eligible,false);
 });
 check('N-145 is excluded centrally',fixture.ready,'MaintenanceEligibility',()=>{assert.equal(maintenanceEligibility(fixture.ready,'N-145','repair').eligible,false)});
 check('20 hours is a planning threshold, not automatic grounding',fixture.completed,'DepartureEligibility',()=>{

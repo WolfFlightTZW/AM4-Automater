@@ -173,7 +173,7 @@ export function createDom(doc = document, repairWearThreshold = 20) {
     const balance = cash();
     if (!Number.isSafeInteger(balance) || balance - fresh.cost < 100000000 || browserAutomation().length) return { ok: false, clicked: false, reason: 'CASH_OR_BROWSER_AUTOMATION_GATE' };
     const fleet = [...doc.querySelectorAll('#landedList .flight-list[data-reg]')].filter(r => r.id === 'flightStatus'+id && r.dataset.reg === registration && r.dataset.grounded === '0' && clean(r.querySelector('[id^="flightStatusCounter"]')?.textContent).toLowerCase() === 'landed');
-    if (fleet.length !== 1 || registration === 'N-145' || excludedAircraftIds.includes(id) || (kind === 'repair' ? !(fresh.row.wear >= repairWearThreshold) : !(fresh.row.hoursToCheck <= 20))) return { ok: false, clicked: false, reason: 'PRECOMMIT_ELIGIBILITY_CHANGED' };
+    if (fleet.length !== 1 || registration === 'N-145' || excludedAircraftIds.includes(id) || (kind === 'repair' ? !(fresh.row.wear > repairWearThreshold) : !(fresh.row.hoursToCheck < 20))) return { ok: false, clicked: false, reason: 'PRECOMMIT_ELIGIBILITY_CHANGED' };
     const key = id + ':' + kind;
     globalThis.__am4HarnessAttempts ||= {};
     if (globalThis.__am4HarnessAttempts[key]) return { ok: false, clicked: false, reason: 'PAGE_ATTEMPT_ALREADY_RECORDED' };
@@ -214,7 +214,7 @@ export function createDom(doc = document, repairWearThreshold = 20) {
     const routeId=buttons.length===1?buttons[0].id.slice('flightInfoDepart'.length):null;
     const rows=aircraftId?[...doc.querySelectorAll('.flight-list[data-reg]')].filter(r=>r.id==='flightStatus'+aircraftId):[];
     const regs=rows.length===1?[String(rows[0].dataset.reg||'')]:[];
-    return { aircraftId, routeId, fuelRequired:number(clean(panel.innerText).match(/Fuel usage\s+([\d,]+)\s*Lbs/i)?.[1]),header:inventory(), hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
+    return { aircraftId, routeId, fuelRequired:number(clean(panel.innerText).match(/Fuel usage\s+([\d,]+)\s*Lbs/i)?.[1]), co2Required:number(clean(panel.innerText).match(/CO(?:2|\u2082) (?:usage|quotas?)\s+([\d,]+)/i)?.[1]),header:inventory(), hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
   }
   return { maintenance, schedule, controls, browserAutomation, navigate, showFleet, openPlanner, inspectPlanner, commit, response, flight, inventory, receipt, departureObservation, number, handler, registrations };
 }

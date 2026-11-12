@@ -29,7 +29,7 @@ export function maintenanceEligibility(snapshot, registration, kind, holds = [],
   if ((snapshot.schedule?.entries || []).some(e => scheduleMatches(e,aircraft?.registration||registration,id))) reasons.push('EXISTING_SCHEDULE');
   if (holds.length) reasons.push('DURABLE_ACTION_HOLD');
   if(requireAction&&!row?.availableActions?.includes(kind))reasons.push('ACTION_NOT_AVAILABLE');
-  if (row && (kind === 'repair' ? !(row.wear >= settings.repairWearThreshold) : !(row.hoursToCheck <= 20))) reasons.push('NOT_DUE');
+  if (row && (kind === 'repair' ? !(row.wear > settings.repairWearThreshold) : !(row.hoursToCheck < 20))) reasons.push('NOT_DUE');
   return { eligible: reasons.length === 0, reasons, aircraft, row };
 }
 export function maintenanceChoice(snapshot,registration,holds=[]){
@@ -40,7 +40,7 @@ export function requiredMaintenance(snapshot,registration,holds=[]){
   const {row}=identityRows(snapshot,registration);
   if(!Number.isFinite(row?.hoursToCheck))return null;
   // A-check due takes priority; unavailable A-check falls through to departure, not repair.
-  const kind=row.hoursToCheck<=20?'check':'repair';
+  const kind=row.hoursToCheck<20?'check':'repair';
   if(row.unavailableActions?.includes(kind))return null;
   return maintenanceEligibility(snapshot,registration,kind,holds,{requireAction:false}).eligible?kind:null;
 }

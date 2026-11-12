@@ -1,5 +1,6 @@
 export class PassPerformance {
   constructor(now=()=>performance.now()){this.now=now;this.timings={};this.counts={examined:0,eligible:0,skipped:0,dispatched:0,deferred:0,attempted:0};}
+  count(name,amount=1){this.counts[name]=(this.counts[name]||0)+amount;}
   record(name,durationMs){const item=this.timings[name]||={calls:0,durationMs:0};item.calls++;item.durationMs=Math.round((item.durationMs+Math.max(0,durationMs))*1000)/1000;}
   async measure(name,operation){const start=this.now();try{return await operation();}finally{this.record(name,this.now()-start);}}
   report(){const navigationMs=this.timings.navigation?.durationMs||0,actionMs=Math.max(0,['departureAction','purchaseAction','maintenanceAction'].reduce((n,k)=>n+(this.timings[k]?.durationMs||0),0)-(this.timings.actionNavigation?.durationMs||0));return {navigationMs,actionMs,timings:structuredClone(this.timings),counts:{...this.counts},note:'Inclusive action durations overlap component inspection timings; do not add the categories.'};}

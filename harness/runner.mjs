@@ -36,6 +36,7 @@ export class Runner {
   }
   remaining() { const ms = this.deadline - Date.now(); if (ms <= 0) throw new Error('SCENARIO_TIME_BUDGET_EXHAUSTED'); return ms; }
   async evaluate(expression, label, {resourceKind}={}) {
+    if(/source\.(?:marketJs|purchase|selectJs|departJs)|DOM\.showFleet/.test(label))this.maintenanceView=null;
     if(/source\.purchase/.test(label))this.resources.invalidate(resourceKind);
     else if(/DOM\.commit|source\.departJs/.test(label)&&!this.batchSnapshot)this.resources.invalidate();
     this.cdp.timeoutMs = Math.min(String(label).startsWith('source.purchaseJsTemplate')?17000:12000, this.remaining());
@@ -46,11 +47,14 @@ export class Runner {
     return value;
   }
   dom(method,args=[]){const read=()=>this.evaluate(domExpression(method,args),'DOM.'+method);const category={openPlanner:'navigation',flight:'flightInspection',receipt:'receiptInspection',departureObservation:'targetInspection',inventory:'headerInspection'}[method];return category?this.measure(category,read):read();}
-  async nav(view) { const result = await this.measure('navigation',()=>this.dom('navigate',[view])); if (!result.ok) throw new Error(result.reason); }
+  async nav(view) {
+    if(this.batchSnapshot&&this.maintenanceView===view){const current=await this.dom(view==='plan'?'maintenance':'schedule');if(view==='plan'?current.ok:current.complete)return;}
+    const result=await this.measure('navigation',()=>this.dom('navigate',[view]));if(!result.ok)throw new Error(result.reason);this.maintenanceView=view;
+  }
   measure(name,operation){if(!this.performance)return operation();return name==='navigation'&&this.actionInProgress?this.performance.measure('actionNavigation',()=>this.performance.measure(name,operation)):this.performance.measure(name,operation);}
   async markets({fresh=false,kinds}={}) {
     try{this.operator?.assertCanCommit();}catch(error){this.resources.invalidate();throw error;}
-    return this.resources.read(requestedKinds=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(marketExpression(this.source.blocks.marketJs,requestedKinds),'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);notifyForecast(this.forecast,'observeMarkets',value);return value;}),{fresh,kinds});
+    return this.resources.read(requestedKinds=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(marketExpression(this.source.blocks.marketJs,requestedKinds),'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);if(value.inspectionMs){this.performance?.count('resourceScreenVisits',1+Number(Number.isFinite(value.inspectionMs.co2)));this.performance?.count('resourceObservations');}notifyForecast(this.forecast,'observeMarkets',value);return value;}),{fresh,kinds});
   }
   async fleet() { const rows=await this.measure('fleetScan',()=>this.evaluate(this.source.blocks.fleetJs,'source.fleetJs'));this.aircraftIds.clear();for(const a of rows){if(validAircraftId(a.aircraftId)&&rows.filter(r=>r.registration===a.registration).length===1)this.aircraftIds.set(a.registration,a.aircraftId);if(a.registration==='N-145'&&validAircraftId(a.aircraftId))this.excludedIds.add(a.aircraftId);}return rows; }
   async snapshot({ markets = false } = {}) {
@@ -221,7 +225,7 @@ export class Runner {
     if (!selected.ok) throw new Error('DEPARTURE_SELECTION_FAILED');
     await this.pause(650); let flight = await this.dom('flight');
     if(this.batchSnapshot){
-      if(!this.resources.observeHeader(flight.header)||this.resources.low()||Number.isSafeInteger(flight.fuelRequired)&&flight.fuelRequired>this.resources.value?.fuel?.holding){await this.markets({fresh:true});await this.evaluate(renderBlock(this.source.blocks.selectJs,reg,null,aircraftId),'source.selectJs');await this.pause(650);flight=await this.dom('flight');if(!this.resources.observeHeader(flight.header))throw new Error('RESOURCE_OBSERVATION_UNCERTAIN');}
+      if(!this.resources.observeHeader(flight.header)||Number.isSafeInteger(flight.fuelRequired)&&flight.fuelRequired>this.resources.value?.fuel?.holding){await this.markets({fresh:true});await this.evaluate(renderBlock(this.source.blocks.selectJs,reg,null,aircraftId),'source.selectJs');await this.pause(650);flight=await this.dom('flight');if(!this.resources.observeHeader(flight.header))throw new Error('RESOURCE_OBSERVATION_UNCERTAIN');}
       report.startingState.markets=structuredClone(this.resources.value);
     }
     const hours = flight.aircraftId===aircraftId&&flight.registrations?.length === 1 && flight.registrations[0] === reg ? flight.hours : null;
