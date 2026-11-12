@@ -123,14 +123,15 @@ export function createDom(doc = document, repairWearThreshold = 20) {
     t[0].click();await waitFor(ready);
     return {ok:true,screen:'FLEET'};
   }
-  async function showRoutes(){
+  async function showRoutes({refresh=false}={}){
     const ready=()=>{const b=doc.querySelector('#departAll'),popup=doc.querySelector('#popup.show');return visible(b)&&(!visible(popup)||popup.contains(b));};
-    if(ready())return {ok:true,screen:'ROUTES'};
+    if(!refresh&&ready())return {ok:true,screen:'ROUTES'};
+    const previous=doc.querySelector('#departAll');
     const tab=[...doc.querySelectorAll('button[onclick]')].filter(e=>enabled(e)&&/^Routes(?:\s|\()/i.test(clean(e.innerText))&&/Ajax\(['"]routes\.php['"],\s*['"]routeAction['"]/.test(e.getAttribute('onclick')||''));
     if(tab.length===1)tab[0].click();else{
       const menu=doc.querySelector('#mapRoutes');if(!enabled(menu)||!/menuFleet\(['"]Routes['"]\)/.test(menu.getAttribute('onclick')||''))return {ok:false,reason:'ROUTES_MENU_UNAVAILABLE'};menu.click();
     }
-    await waitFor(ready);return {ok:true,screen:'ROUTES'};
+    await waitFor(()=>doc.querySelector('#departAll')!==previous&&ready());return {ok:true,screen:'ROUTES'};
   }
   function rootContent(){return doc.querySelector('#maintAction')?.innerHTML;}
   function inspectPlanner(registration, kind, id, openedForTarget=false) {

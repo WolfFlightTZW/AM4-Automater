@@ -60,7 +60,7 @@ export function bulkDom(doc,method,args={}){
   }
   if(method==='departureCommit'){
     const rows=landed().filter(r=>args.ids?.includes(r.id)),native=nativeDeparture();
-    if(!args.ids?.length||!native||!same(native.routeIds,args.routeIds||[])||native.count!==args.ids.length||!same(rows.map(r=>r.id),args.ids)||rows.some(r=>!r.id||r.registration==='N-145'||args.excludedAircraftIds?.includes(r.id)))return {clicked:false,reason:'BULK_TARGET_SET_CHANGED'};
+    if(!args.ids?.length||!native||!same(native.routeIds,args.routeIds||[])||native.count!==args.ids.length||!same(rows.map(r=>r.id),args.ids)||rows.some(r=>!r.id||r.registration==='N-145'||args.excludedAircraftIds?.includes(r.id)))return {clicked:false,reason:'BULK_TARGET_SET_CHANGED',evidence:{nativeReady:Boolean(native),nativeCount:native?.count,expectedCount:args.ids?.length,landedMatches:same(rows.map(r=>r.id),args.ids||[]),routeMatches:Boolean(native&&same(native.routeIds,args.routeIds||[]))}};
     native.button.click();return {clicked:true};
   }
   if(method==='departureState')return args.ids.map(id=>({id,rows:[...doc.querySelectorAll('[id="flightStatus'+id+'"]')].map(e=>({location:e.parentElement?.id,registration:String(e.dataset.reg||'')}))}));

@@ -162,7 +162,7 @@ try{
     let usedBulk=false;
     if(eligibleCandidates.length>=1&&maxDepartures>0&&Date.now()<passDeadline-15000){
       const r=await action('BulkDeparture',null,()=>bulkDeparture(runner,snapshot,eligibleCandidates));
-      report.bulk.departure={reason:r.reason,result:r.result,fallback:r.fallback,targetCount:r.targetCount};usedBulk=!r.fallback;
+      report.bulk.departure={reason:r.reason,result:r.result,fallback:r.fallback,targetCount:r.targetCount,evidence:r.evidence};usedBulk=!r.fallback;
       if(usedBulk){
         for(const id of r.verified){const a=snapshot.fleet.find(a=>a.aircraftId===id);report.verifiedDepartures.push(a.registration);runner.performance.counts.dispatched++;runner.performance.counts.eligible++;
           const shown=await fleetHeartbeat.afterDeparture({result:'PASS',state:'DEPARTED_VERIFIED',submitted:true},{active,display:()=>runner.dom('showFleet'),begin:()=>runner.operator.begin('Fleet visual heartbeat'),end:()=>runner.operator.end('RETURNED')});if(shown)console.log(JSON.stringify({event:'FLEET_HEARTBEAT',...shown}));
