@@ -274,6 +274,8 @@ export class Runner {
     const market = report.startingState.markets[kind];
     if (!market?.ok) throw new Error('MARKET_INCOMPLETE');
     const input = { kind, price: market.pricePer1000, capacity: market.capacityMax, holding: market.holding, cash: market.cash };
+    const strategy=this.resources.purchasePlan?.(kind);
+    if(strategy&&!strategy.buy){report.reason=strategy.reason;report.endingState=report.startingState;return;}
     const requested = wholeQuantity(input);
     if (!requested) { report.reason = 'NO_NATURALLY_QUALIFYING_MARKET'; report.endingState = report.startingState; return; }
     const cost = Math.round(requested * input.price / 1000);

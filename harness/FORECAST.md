@@ -1,8 +1,8 @@
-# AM4Info resource advisories
+# AM4Info resource planning
 
 For an independent continuously updated console while operating AM4 manually, use `Start-AM4-Forecast.cmd`. See [FORECAST-CONSOLE.md](FORECAST-CONSOLE.md) for commands, quantity configuration, local history and shutdown. It starts no controller or CDP connection.
 
-Implemented as advisory-only source integration. It never purchases, defers a production purchase, overrides price ceilings or reserve, changes a resource-cache deadline, or adds a transaction hold. AM4 remains authoritative. The running worker must be restarted through the normal controlled operator procedure to load newly installed source; implementation/testing alone does not deploy it.
+Production purchasing now includes the approved forecast-aware schedule described below. The standalone console and advisory arithmetic remain read-only. Forecasts never override actual quotes, ceilings, reserve or transaction safeguards, and add no holds. AM4 remains authoritative. The running worker must be restarted through the normal controlled operator procedure to load newly installed source; implementation/testing alone does not deploy it.
 
 ## Retrieval
 
@@ -36,10 +36,42 @@ Operational shortfall uses the existing 75,000-unit gates and route requirements
 
 Strategic output compares the next future below-ceiling window to the current observed price. If current qualified price is no worse, the bulk window is now; otherwise it shows the future window, projected consumption/capacity, quantity and savings. It does not claim the globally optimal 24-hour schedule. A wait recommendation requires credible forecasts and sufficient projected stock through that window. Rates use only verified receipt samples (at least three over at least one minute); before that, projections and delay economics are blank. Current game-price data must belong to the current UTC window; old saved reports are labeled stale and never presented as fresh.
 
-## Standalone check and later activation
+## Standalone check
 
 `node harness/forecast-command.mjs` retrieves the public forecast once and reads only the existing local `Reports/operations-latest.json`. It opens no CDP connection, changes no operator/recovery state, and makes no game actions. It writes the two local forecast reports and prints the advisory. Saved reports may lack prices; absent values stay unknown. A clean clone can run it without runtime initialization or credentials.
 
-The worker observes prices and verified receipts through optional, exception-isolated Runner hooks. It publishes advisories at normal batch completion. Existing market polling, purchasing admission, submission/verification and dispatch policies are unchanged.
+The worker observes prices and verified receipts through optional, exception-isolated Runner hooks and publishes advisory reports at normal batch completion. The console and `forecast-command.mjs` cannot submit actions. Production alone attaches the scheduling strategy below; submission/verification and departure safeguards are unchanged.
 
-Before any later automated forecast-informed policy, collect a representative multi-day pre-transition comparison sample, review error/missed coverage and consumption estimates, and explicitly approve its savings-versus-delay rules and price-ceiling treatment. Implement that as a separately authorized policy change with shadow comparisons first. This implementation intentionally exposes no forecast action switch.
+## Approved production scheduling
+
+`resource-strategy.mjs` independently schedules fuel and CO2 observations and purchase decisions. This is implemented source, not evidence of deployment into an already-running worker. A normal controlled deployment remains required.
+
+Central `resourcePurchasing` defaults can be overridden in `production-settings.json`:
+
+```json
+"resourcePurchasing": {
+  "enabled": true,
+  "absenceMinutes": 30,
+  "uncertaintyFactor": 1.5,
+  "minimumSavings": 5000,
+  "minimumSavingsFraction": 0.1,
+  "topUpCapacityFraction": 0.1,
+  "maxDeferredMinutes": 30
+}
+```
+
+These are scheduling preferences, not new price ceilings or transaction quantities. Whenever a purchase is admitted, existing exact maximum whole-unit arithmetic, fresh actual quote binding, enabled-control validation, cash reserve, intent and verification remain intact. A final strategy check occurs against Runner's newly read actual quote before durable intent. No forecast price becomes a transaction quote. Disable `resourcePurchasing.enabled` to retain the previous game-driven scheduling.
+
+Forecast scheduling requires a fresh current window, retrieval status OK and the existing PROVISIONAL accuracy grade (at least six qualifying comparisons; errors, revisions or excessive missed/missing observations lower confidence). It also requires at least three verified receipt samples over one minute. Otherwise it falls back to the existing policy with `FORECAST_UNAVAILABLE`. This deliberately may leave scheduling unchanged on installations lacking sufficient accuracy evidence; no extra game navigation is introduced to manufacture comparisons.
+
+Consumption is the greater of the trailing 15-minute and 60-minute rates, calculated from actual verified aggregate or individual receipts, not an assumed flight count. The session buffer is the maximum of the existing batch resource margin, observed demand for the configured absence interval with uncertainty allowance, and the currently observed batch size times known conservative per-aircraft consumption. It grows when observed demand/composition changes. It is not a guarantee against unlimited absence or a future fleet change. No inventory or fleet registry is persisted.
+
+- Expensive prices and comfortable receipt-accounted reserves: `HIGH_PRICE_HOLD`, with no market opening just because an expensive window starts. The next favorable forecast or reserve risk prompts reassessment.
+- A materially cheaper future window: `WAIT_FOR_BETTER_WINDOW` only when projected burn plus the dynamic buffer fits current reserves. Both configured absolute and fractional savings must be met.
+- Favorable actual price: `BUY_NOW` once meaningful batch capacity accumulates. Small gaps wait; no per-departure top-ups. Within five minutes of a material predicted increase, `BUY_BEFORE_PRICE_INCREASE` may replenish below the normal capacity trigger when projected savings also meet the absolute material-savings setting.
+- Low reserves: `RESERVE_PROTECTION` overrides economic waiting, within actual hard spending limits. A valid expensive quote is not reopened repeatedly before its deadline and cannot authorize a purchase.
+- Full storage: `INSUFFICIENT_CAPACITY` until verified consumption or reconciliation changes it. Missing/uncertain inventory: `INVENTORY_RECONCILIATION`.
+
+Reconsideration is bounded by the configured deferral interval and estimated coverage; it runs at existing production opportunities, never delaying dispatch or adding a timer/controller. Current headers and exact receipts remain the authority for cached quantity reconciliation. Manual inventory changes invalidate it immediately. A restart restores no trusted session inventory or demand rate.
+
+`RESOURCE_PURCHASE_PLAN` logs reason/confidence/target-window transitions and stores two compact current plans in `operations-latest.json`. It does not print a new plan for each quantity decrement or archive an operational state history. The older `RESOURCE_FORECAST_ADVISORY` report remains independently advisory, so it may describe options rather than the production decision.

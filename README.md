@@ -73,8 +73,10 @@ If a panel is unavailable, the command may publish a separate `.INCOMPLETE.csv` 
 
 Resource purchasing schedules each resource independently, using its displayed price-update countdown and observed inventory. A due decision uses fresh AM4 values and the enabled Purchase control. Historical UNKNOWN purchase records remain diagnostic evidence and do not veto a new qualifying fuel/CO2 purchase or reserve cash. Each current submission is clicked once and verified; ambiguous responses are not replayed. See DESIGN.md for the unchanged limits and current-response handling.
 
-## AM4Info forecast advisories
+## AM4Info resource planning
 
-The optional resource forecast monitor is advisory-only: it cannot purchase or defer game purchases. See [harness/FORECAST.md](harness/FORECAST.md) for the public endpoint, configuration, compact local reports, confidence limits and `node harness/forecast-command.mjs` read-only check. Existing production price/countdown and purchasing policies remain unchanged.
+Production can now use trusted AM4Info forecasts and observed consumption to defer purchases safely or replenish before price increases. Actual AM4 quotes, strict ceilings, exact maximum quantities and the cash reserve remain authoritative. Missing/untrusted forecasts retain the existing policy. The standalone console remains advisory-only. See [harness/FORECAST.md](harness/FORECAST.md) for configuration and limitations.
+
+For a separate read-only bonus-point report, run `node harness/achievement-advisor.mjs`. It never connects to the game. See [achievement collection and report instructions](harness/ACHIEVEMENTS.md).
 
 Dispatch batches now assess Fleet/maintenance first, perform eligible native bulk servicing where its quote is verifiable, establish resource readiness, then use native Depart All or the verified serial fallback. Sufficient-stock batches do not top up after each aircraft. See [throughput implementation and limits](harness/THROUGHPUT.md). New code requires a normal controlled deployment/start; source installation never resumes a manual pause.

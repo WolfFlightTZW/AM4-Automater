@@ -3,7 +3,8 @@ export class ResourceCache {
   constructor({maxAgeMs=10000,unreliableTimerRetryMs=60000,now=Date.now}={}){this.unreliableTimerRetryMs=unreliableTimerRetryMs;this.maxAgeMs=maxAgeMs;this.now=now;this.batch=false;this.dispatchRemaining=null;this.usage={fuel:0,co2:0};this.decisions={};this.logKeys={};this.invalidate();this.metrics={reads:0,hits:0,invalidations:0,receiptDebits:0,uncertainDebits:0,headerMismatches:0};}
   invalidate(kind){if(kind&&this.value){delete this.value[kind];this.value.ok=false;}else{this.value=null;this.at=0;}if(this.metrics)this.metrics.invalidations++;}
   priceDue(kind){return kind?this.marketDue(kind):['fuel','co2'].some(k=>this.marketDue(k));}
-  marketDue(kind){const m=this.value?.[kind];return !m||(!(m.ok&&m.holding>=m.capacityMax)&&this.now()>=(m.priceValidUntil??0));}
+  marketDue(kind){return this.purchasePlan?this.purchasePlan(kind).observe:this.legacyMarketDue(kind);}
+  legacyMarketDue(kind){const m=this.value?.[kind];return !m||(!(m.ok&&m.holding>=m.capacityMax)&&this.now()>=(m.priceValidUntil??0));}
   beginDispatch(count){this.dispatchRemaining=count;}
   endDispatch(){this.dispatchRemaining=null;}
   resourceBudget(kind,required=0){
@@ -13,7 +14,7 @@ export class ResourceCache {
     return 75000+Math.max(required,margin);
   }
   dispatchPurchaseDue(kind,required=0){
-    if(this.marketDue(kind))return true;
+    if(this.legacyMarketDue(kind))return true;
     const m=this.value?.[kind];if(!m?.ok)return true;
     if(m.holding>=m.capacityMax)return false;
     if(m.pricePer1000>=(kind==='fuel'?1000:150))return this.decisions[kind]?.price!==m.pricePer1000;
@@ -21,9 +22,10 @@ export class ResourceCache {
     return m.holding<this.resourceBudget(kind,required);
   }
   purchaseKey(kind){const m=this.value?.[kind];return m?JSON.stringify([m.pricePer1000,m.holding,m.capacityMax,m.cash]):null;}
-  purchaseDue(kind){
+  purchaseDue(kind){return this.purchasePlan?this.purchasePlan(kind).evaluate:this.legacyPurchaseDue(kind);}
+  legacyPurchaseDue(kind){
     if(this.dispatchRemaining!==null)return this.dispatchPurchaseDue(kind);
-    if(this.marketDue(kind))return true;
+    if(this.legacyMarketDue(kind))return true;
     const m=this.value?.[kind];if(!m?.ok||m.holding>=m.capacityMax)return false;
     if(m.pricePer1000>=(kind==='fuel'?1000:150))return this.decisions[kind]?.price!==m.pricePer1000;
     return this.decisions[kind]?.key!==this.purchaseKey(kind);

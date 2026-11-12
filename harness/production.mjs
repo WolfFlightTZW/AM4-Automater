@@ -13,6 +13,7 @@ import { highCycleReport } from './fleet-report.mjs';
 import { OperatorSession } from '../operator/control.mjs';
 import {bulkMaintenance,bulkDeparture} from './bulk-operations.mjs';
 import { purchaseDecision } from './purchasing.mjs';
+import {attachResourceStrategy} from './resource-strategy.mjs';
 import {ForecastMonitor,notifyForecast} from './forecast-monitor.mjs';
 import { settings } from './settings.mjs';
 import { waitBetweenPasses } from './cadence.mjs';
@@ -56,9 +57,18 @@ async function purchaseMarkets(trigger){
   active();runner.deadline=Date.now()+120000;
   // Only a due resource gets a new observation/decision; actions retain fresh quote binding.
   for(const kind of ['fuel','co2']){
+    const plan=runner.resources.purchasePlan?.(kind);
+    if(plan){
+      report.resourcePlans||={};report.resourcePlans[kind]=plan;
+      runner.resourcePlanLogKeys||={};const key=JSON.stringify([plan.reason,plan.forecastTrusted,plan.nextFavorable]);
+      if(runner.resourcePlanLogKeys[kind]!==key){runner.resourcePlanLogKeys[kind]=key;console.log(JSON.stringify({event:'RESOURCE_PURCHASE_PLAN',...plan}));}
+    }
     if(!runner.resources.purchaseDue(kind))continue;
     const m=await runner.markets({kinds:[kind]});report.markets=m;
     const d={at:new Date().toISOString(),trigger,...purchaseDecision(m,kind)};
+    const currentPlan=runner.resources.purchasePlan?.(kind);
+    if(d.decision==='BUY'&&currentPlan&&!currentPlan.buy){d.decision='SKIP';d.reason=currentPlan.reason;}
+    if(currentPlan)d.strategyReason=currentPlan.reason;
     try{if(d.decision==='BUY'){
       const r=await action(kind==='fuel'?'PurchaseFuel':'PurchaseCO2');
       d.result=r.result;d.reportId=r.id;d.checkpoint=r.checkpoint;
@@ -74,6 +84,7 @@ async function purchaseMarkets(trigger){
 try{
   runner.forecast=new ForecastMonitor({directory:join(root,'reports'),...settings.forecastAdvisory,log:event=>console.log(JSON.stringify(event))});
   await runner.forecast.initialize();notifyForecast(runner.forecast,'tick');
+  attachResourceStrategy(runner.resources,runner.forecast,settings.resourcePurchasing);
   runner.operator=new OperatorSession(join(root,'operator','state'),'AUTOMATIC');
   const guardOptions={ignoreControllerPids:[process.ppid]};
   for(let attempt=0;;attempt++){

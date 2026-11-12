@@ -2,6 +2,7 @@ import {readFile,writeFile,rename,mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {retrieveForecast,addForecast,observeActual,pruneAccuracy,SLOT_MS,slotStart} from './forecast.mjs';
 import {planResources} from './forecast-planner.mjs';
+import {consumptionRate} from './resource-strategy.mjs';
 export class ForecastMonitor{
   constructor({directory,enabled=true,now=Date.now,fetcher=fetch,log=()=>{},opportunityCostPerAircraftHour=null}={}){
     Object.assign(this,{directory,enabled,now,fetcher,log,opportunityCostPerAircraftHour});this.state={version:1,forecast:null,records:[]};this.markets={};this.observedAt={};this.samples=[];this.started=now();this.nextFetch=0;this.nextPublish=0;this.status='NOT_LOADED';this.context={};
@@ -16,7 +17,7 @@ export class ForecastMonitor{
     // Anonymous requirements from a selected enabled flight panel, not an aircraft registry.
     this.routeNeeds||=[];this.routeNeeds.push({fuel:Number.isSafeInteger(flight.fuelRequired)?flight.fuelRequired:null});this.routeNeeds=this.routeNeeds.slice(-20);
   }
-  consumption(){const at=this.now(),samples=this.samples.filter(s=>s.at>=at-3600000),hours=(at-Math.max(this.started,at-3600000))/3600000;return Object.fromEntries(['fuel','co2'].map(k=>[k,{unitsPerHour:samples.length>=3&&hours>=1/60?samples.reduce((sum,s)=>sum+s[k],0)/hours:null,basis:'SESSION_VERIFIED_RECEIPTS_TRAILING_MAX_ONE_HOUR',samples:samples.length}]));}
+  consumption(){const at=this.now(),samples=this.samples.filter(s=>s.at>=at-3600000);return Object.fromEntries(['fuel','co2'].map(k=>[k,{unitsPerHour:consumptionRate(samples,k,this.started,at),basis:'SESSION_VERIFIED_RECEIPTS_MAX_OF_15_AND_60_MINUTE_RATES',samples:samples.length}]));}
   update({markets,context}={}){if(!this.enabled)return; if(markets)for(const k of ['fuel','co2']){
     // Working receipt-accounted inventories may change; never turn cached prices into new accuracy samples.
     if(markets[k]&&this.observedAt[k])this.markets[k]=structuredClone(markets[k]);
