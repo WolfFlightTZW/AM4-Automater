@@ -123,6 +123,15 @@ export function createDom(doc = document, repairWearThreshold = 20) {
     t[0].click();await waitFor(ready);
     return {ok:true,screen:'FLEET'};
   }
+  async function showRoutes(){
+    const ready=()=>{const b=doc.querySelector('#departAll'),popup=doc.querySelector('#popup.show');return visible(b)&&(!visible(popup)||popup.contains(b));};
+    if(ready())return {ok:true,screen:'ROUTES'};
+    const tab=[...doc.querySelectorAll('button[onclick]')].filter(e=>enabled(e)&&/^Routes(?:\s|\()/i.test(clean(e.innerText))&&/Ajax\(['"]routes\.php['"],\s*['"]routeAction['"]/.test(e.getAttribute('onclick')||''));
+    if(tab.length===1)tab[0].click();else{
+      const menu=doc.querySelector('#mapRoutes');if(!enabled(menu)||!/menuFleet\(['"]Routes['"]\)/.test(menu.getAttribute('onclick')||''))return {ok:false,reason:'ROUTES_MENU_UNAVAILABLE'};menu.click();
+    }
+    await waitFor(ready);return {ok:true,screen:'ROUTES'};
+  }
   function rootContent(){return doc.querySelector('#maintAction')?.innerHTML;}
   function inspectPlanner(registration, kind, id, openedForTarget=false) {
     const section = doc.querySelector(kind === 'repair' ? '#typeRepair' : '#typeCheck');
@@ -216,10 +225,10 @@ export function createDom(doc = document, repairWearThreshold = 20) {
     const regs=rows.length===1?[String(rows[0].dataset.reg||'')]:[];
     return { aircraftId, routeId, fuelRequired:number(clean(panel.innerText).match(/Fuel usage\s+([\d,]+)\s*Lbs/i)?.[1]), co2Required:number(clean(panel.innerText).match(/CO(?:2|\u2082) (?:usage|quotas?)\s+([\d,]+)/i)?.[1]),header:inventory(), hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
   }
-  return { maintenance, schedule, controls, browserAutomation, navigate, showFleet, openPlanner, inspectPlanner, commit, response, flight, inventory, receipt, departureObservation, number, handler, registrations };
+  return { maintenance, schedule, controls, browserAutomation, navigate, showFleet, showRoutes, openPlanner, inspectPlanner, commit, response, flight, inventory, receipt, departureObservation, number, handler, registrations };
 }
 export function domExpression(method, args = []) {
-  if (!['maintenance', 'schedule', 'controls', 'browserAutomation', 'navigate', 'showFleet', 'openPlanner', 'inspectPlanner', 'commit', 'response', 'flight', 'inventory', 'receipt', 'departureObservation'].includes(method)) throw new Error('DOM_METHOD_NOT_ALLOWED');
+  if (!['maintenance', 'schedule', 'controls', 'browserAutomation', 'navigate', 'showFleet', 'showRoutes', 'openPlanner', 'inspectPlanner', 'commit', 'response', 'flight', 'inventory', 'receipt', 'departureObservation'].includes(method)) throw new Error('DOM_METHOD_NOT_ALLOWED');
   return `(async()=>JSON.stringify(await (${createDom.toString()})(document,${JSON.stringify(settings.repairWearThreshold)})[${JSON.stringify(method)}](...${JSON.stringify(args)})))()`;
 }
 

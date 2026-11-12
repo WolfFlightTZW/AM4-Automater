@@ -36,7 +36,7 @@ export class Runner {
   }
   remaining() { const ms = this.deadline - Date.now(); if (ms <= 0) throw new Error('SCENARIO_TIME_BUDGET_EXHAUSTED'); return ms; }
   async evaluate(expression, label, {resourceKind}={}) {
-    if(/source\.(?:marketJs|purchase|selectJs|departJs)|DOM\.showFleet/.test(label))this.maintenanceView=null;
+    if(/source\.(?:marketJs|purchase|selectJs|departJs)|DOM\.show(?:Fleet|Routes)/.test(label))this.maintenanceView=null;
     if(/source\.purchase/.test(label))this.resources.invalidate(resourceKind);
     else if(/DOM\.commit|source\.departJs/.test(label)&&!this.batchSnapshot)this.resources.invalidate();
     this.cdp.timeoutMs = Math.min(String(label).startsWith('source.purchaseJsTemplate')?17000:12000, this.remaining());

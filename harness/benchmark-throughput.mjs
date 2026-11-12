@@ -6,7 +6,7 @@ class PreviousCadence extends ResourceCache{
   purchaseDue(kind){if(this.marketDue(kind))return true;const m=this.value?.[kind];if(!m?.ok||m.holding>=m.capacityMax)return false;if(m.pricePer1000>=(kind==='fuel'?1000:150))return this.decisions[kind]?.price!==m.pricePer1000;return this.decisions[kind]?.key!==this.purchaseKey(kind);}
 }
 export async function resourceReplay({previous=false,departures=20,inspectionMs=1600,departureMs=6500,maintenanceMs=4000}={}){
-  const production=readFileSync(new URL('./production.mjs',import.meta.url),'utf8');let fn=production.slice(production.indexOf('async function purchaseMarkets('),production.indexOf('\ntry{\n',production.indexOf('async function purchaseMarkets(')));
+  const production=readFileSync(new URL('./production.mjs',import.meta.url),'utf8').replace(/\r\n/g,'\n');let fn=production.slice(production.indexOf('async function purchaseMarkets('),production.indexOf('\ntry{\n',production.indexOf('async function purchaseMarkets(')));
   if(previous)fn=fn.replace('runner.markets({kinds:[kind]})','runner.markets({fresh:true,kinds:[kind]})');
   let now=0,cash=300000000,reads=0,visits=0,purchases=0;const stock={fuel:4000000,co2:4000000},capacity=4000000,cache=new (previous?PreviousCadence:ResourceCache)({now:()=>now});cache.batch=true;
   const report={purchases:[]},r={resources:cache,deadline:0,markets:options=>cache.read(async kinds=>{reads++;visits+=1+Number((kinds||['fuel','co2']).includes('co2'));return Object.fromEntries([['ok',true],...(kinds||['fuel','co2']).map(k=>[k,{ok:true,kind:k,pricePer1000:k==='fuel'?500:120,holding:stock[k],capacityMax:capacity,capacityUsed:capacity-stock[k],cash,nextRefreshSeconds:1200}])]);},options)};

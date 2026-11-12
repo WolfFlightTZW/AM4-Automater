@@ -54,6 +54,10 @@ export class ResourceCache {
     if(this.dispatchRemaining!==null)this.dispatchRemaining=Math.max(0,this.dispatchRemaining-1);
     this.lastIssue=null;this.metrics.receiptDebits++;return true;
   }
+  observeBurn(receipt){
+    if(!Number.isInteger(receipt?.routes)||receipt.routes<1)return;
+    for(const k of ['fuel','co2'])if(Number.isSafeInteger(receipt[k])&&receipt[k]>0)this.usage[k]=Math.max(this.usage[k],Math.ceil(receipt[k]/receipt.routes));
+  }
   debitBulk(before,after,count){
     if(!Number.isInteger(count)||count<1||after?.receipt?.routes!==count){this.invalidate();return false;}
     const usage={...this.usage};

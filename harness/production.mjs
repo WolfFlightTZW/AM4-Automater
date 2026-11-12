@@ -129,7 +129,7 @@ try{
         return requiredMaintenance(snapshot,a.registration,runner.holds(a.registration))===kind;
       }).sort((a,b)=>kind==='check'?identityRows(snapshot,a.registration).row.hoursToCheck-identityRows(snapshot,b.registration).row.hoursToCheck:identityRows(snapshot,b.registration).row.wear-identityRows(snapshot,a.registration).row.wear).slice(0,maxMaintenance-maintenanceCount);
       if(!group.length||Date.now()>passDeadline-15000)continue;
-      const r=group.length>1?await action('BulkMaintenance',null,()=>bulkMaintenance(runner,snapshot,group,kind)):{fallback:true,reason:'INDIVIDUAL_TARGET'};
+      const r=await action('BulkMaintenance',null,()=>bulkMaintenance(runner,snapshot,group,kind));
       report.bulk.maintenance.push({kind,reason:r.reason,result:r.result,fallback:r.fallback});
       if(!r.fallback){maintenanceCount+=group.length;runner.performance.counts.maintenanceAttempted=(runner.performance.counts.maintenanceAttempted||0)+group.length;for(const a of group){maintained.add(a.aircraftId);report.maintenanceActions.push({registration:a.registration,kind,result:r.verified.includes(a.aircraftId)?'PASS':'INCONCLUSIVE',reason:r.reason});}}
       else for(const a of group){
@@ -158,22 +158,22 @@ try{
     if(runner.resources.value)runner.resources.observeHeader(await runner.dom('inventory'));
     snapshot.markets=await runner.markets();await purchaseMarkets('BATCH_RESOURCE_READINESS');snapshot.markets=runner.resources.value;
     runner.resources.beginDispatch(eligibleCandidates.length);
-    await runner.dom('showFleet');stage('FLEET_DISPATCH');
+    await runner.dom('showRoutes');stage('FLEET_DISPATCH');
     let usedBulk=false;
-    if(eligibleCandidates.length>=2&&eligibleCandidates.length<=maxDepartures&&Date.now()<passDeadline-15000){
+    if(eligibleCandidates.length>=1&&maxDepartures>0&&Date.now()<passDeadline-15000){
       const r=await action('BulkDeparture',null,()=>bulkDeparture(runner,snapshot,eligibleCandidates));
-      report.bulk.departure={reason:r.reason,result:r.result,fallback:r.fallback};usedBulk=!r.fallback;
+      report.bulk.departure={reason:r.reason,result:r.result,fallback:r.fallback,targetCount:r.targetCount};usedBulk=!r.fallback;
       if(usedBulk){
-        for(const id of r.verified){const a=eligibleCandidates.find(a=>a.aircraftId===id);report.verifiedDepartures.push(a.registration);runner.performance.counts.dispatched++;runner.performance.counts.eligible++;
+        for(const id of r.verified){const a=snapshot.fleet.find(a=>a.aircraftId===id);report.verifiedDepartures.push(a.registration);runner.performance.counts.dispatched++;runner.performance.counts.eligible++;
           const shown=await fleetHeartbeat.afterDeparture({result:'PASS',state:'DEPARTED_VERIFIED',submitted:true},{active,display:()=>runner.dom('showFleet'),begin:()=>runner.operator.begin('Fleet visual heartbeat'),end:()=>runner.operator.end('RETURNED')});if(shown)console.log(JSON.stringify({event:'FLEET_HEARTBEAT',...shown}));
         }
-        runner.performance.counts.attempted+=eligibleCandidates.length;
-        if(r.result!=='PASS'){report.batch.recoveryBreak=true;runner.performance.counts.uncertain=eligibleCandidates.length-r.verified.length;for(const a of eligibleCandidates.filter(a=>!r.verified.includes(a.aircraftId)))report.held.push({registration:a.registration,reasons:['BULK_DEPARTURE_UNCERTAIN']});}
+        runner.performance.counts.attempted+=r.targetCount||eligibleCandidates.length;
+        if(r.result!=='PASS'){report.batch.recoveryBreak=true;runner.performance.counts.uncertain=Math.max(0,(r.targetCount||eligibleCandidates.length)-r.verified.length);for(const a of eligibleCandidates.filter(a=>!r.verified.includes(a.aircraftId)))report.held.push({registration:a.registration,reasons:['BULK_DEPARTURE_UNCERTAIN']});}
       }
     }
     for(const a of usedBulk?[]:eligibleCandidates){
       if(report.verifiedDepartures.length>=maxDepartures||Date.now()>passDeadline-15000)break;
-      if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k))){await purchaseMarkets('BATCH_RESOURCE_MARGIN_OR_PRICE_CHANGE');await runner.dom('showFleet');}
+      if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k))){await purchaseMarkets('BATCH_RESOURCE_MARGIN_OR_PRICE_CHANGE');await runner.dom('showRoutes');}
       snapshot.markets=runner.resources.value;
       const e=departureEligibility(snapshot,a.registration,runner.holds(a.registration),null);
       if(e.reasons.some(reason=>reason!=='FLIGHT_DURATION_UNKNOWN')){runner.performance.counts.skipped++;report.held.push({registration:a.registration,reasons:e.reasons});continue;}

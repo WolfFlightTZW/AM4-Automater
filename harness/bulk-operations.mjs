@@ -16,7 +16,7 @@ async function intentGroup(r,snapshot,targets,kind,cost=0){
 function noSubmission(r,actions){for(const a of actions){a.state='NOT_SUBMITTED';r.store.saveAction(a);}}
 function reportGroup(actions,reason,result,verified,submitted){return {result,reason,fallback:submitted===false,verified,checkpoints:actions.map(a=>a.id),checkpoint:actions[0]?.id,actionAttempted:{submitted}};}
 export async function bulkMaintenance(r,snapshot,targets,kind){
-  if(targets.length<2||targets.length>20)return fallback('BULK_GROUP_SIZE');
+  if(!targets.length)return fallback('BULK_GROUP_SIZE');
   if(targets.some(a=>!maintenanceEligibility(snapshot,a.registration,kind,r.holds(a.registration),{requireAction:false}).eligible||a.status!=='landed'))return fallback('BULK_MAINTENANCE_POLICY');
   const ids=targets.map(a=>a.aircraftId);let actions=[];
   try{
@@ -39,11 +39,14 @@ export async function bulkMaintenance(r,snapshot,targets,kind){
   }
 }
 export async function bulkDeparture(r,snapshot,targets){
-  const landed=snapshot.fleet.filter(a=>a.location==='landedList'&&a.grounded==='0');
-  // Native mode=all is not an explicit ID selection. Only use it for a fully bounded current set.
-  if(targets.length<2||targets.length>20||landed.length!==targets.length||landed.some(a=>!targets.some(t=>t.aircraftId===a.aircraftId)))return fallback('BULK_DEPARTURE_SCOPE_NOT_BOUND');
+  const routes=await r.dom('showRoutes');if(!routes.ok)return fallback(routes.reason);
+  const capability=await read(r,'inspect');if(capability.departureControls!==1)return fallback('BULK_DEPARTURE_CONTROL_UNAVAILABLE');
+  const routeIds=capability.departureRouteIds,landed=snapshot.fleet.filter(a=>a.location==='landedList'&&a.grounded==='0');
+  if(!routeIds?.length||routeIds.length!==capability.departureCount)return fallback('BULK_DEPARTURE_SCOPE_NOT_BOUND');
+  if(landed.length===routeIds.length)targets=landed;
+  else if(targets.length!==routeIds.length)return fallback('BULK_DEPARTURE_SCOPE_NOT_BOUND');
   if(targets.some(a=>excludedAircraft(snapshot,a)||departureEligibility({...snapshot,markets:r.resources.value},a.registration,r.holds(a.registration),null).reasons.some(s=>s!=='FLIGHT_DURATION_UNKNOWN')))return fallback('BULK_DEPARTURE_POLICY');
-  await r.dom('showFleet');const capability=await read(r,'inspect');if(capability.departureControls!==1)return fallback('BULK_DEPARTURE_CONTROL_UNAVAILABLE');
+  r.resources.observeBurn((await r.dom('receipt')).receipt);
   const flights=[];let actions=[];
   try{
     for(const a of targets){
@@ -57,11 +60,12 @@ export async function bulkDeparture(r,snapshot,targets){
       if(co2Budget===null)return fallback('BULK_ROUTE_RESOURCE_REQUIREMENTS_UNKNOWN');
       flights.push({...f,co2Budget});
     }
+    if(new Set(flights.map(f=>f.routeId)).size!==routeIds.length||!flights.every(f=>routeIds.includes(f.routeId)))return fallback('BULK_ROUTE_SCOPE_CHANGED');
     if(flights.reduce((sum,f)=>sum+f.fuelRequired,0)+75000>r.resources.value.fuel.holding||flights.reduce((sum,f)=>sum+f.co2Budget,0)+75000>r.resources.value.co2.holding)return fallback('BULK_RESOURCE_BUDGET_INSUFFICIENT');
     if(!r.options.live)return fallback('BULK_INSPECTION_ONLY');
     await r.confirm('departure','Bulk departure',null);await r.guard.check();r.verifySource();
-    const before=await r.dom('receipt');await r.dom('showFleet');actions=await intentGroup(r,snapshot,targets,'departure');
-    const sent=await commit(r,'departureCommit',{ids:targets.map(a=>a.aircraftId),excludedAircraftIds:[...r.excludedIds]});
+    const before=await r.dom('receipt');await r.dom('showRoutes');actions=await intentGroup(r,snapshot,targets,'departure');
+    const sent=await commit(r,'departureCommit',{ids:targets.map(a=>a.aircraftId),routeIds:flights.map(f=>f.routeId),excludedAircraftIds:[...r.excludedIds]});
     if(!sent.clicked){noSubmission(r,actions);return reportGroup(actions,sent.reason,'SKIP',[],false);}
     for(const a of actions){a.state='UNKNOWN';r.store.saveAction(a);}
     let verified=[];
@@ -75,7 +79,7 @@ export async function bulkDeparture(r,snapshot,targets){
     const inventoryAccounted=verified.length>0&&r.resources.debitBulk(before,after,verified.length);
     if(!inventoryAccounted)r.resources.invalidate();
     else notifyForecast(r.forecast,'recordConsumption',after.receipt);
-    return {...reportGroup(actions,verified.length===targets.length?'BULK_DEPARTURES_VERIFIED':'BULK_DEPARTURE_UNCERTAIN',verified.length===targets.length?'PASS':'INCONCLUSIVE',verified,true),gameResponse:{inventoryAccounted}};
+    return {...reportGroup(actions,verified.length===targets.length?'BULK_DEPARTURES_VERIFIED':'BULK_DEPARTURE_UNCERTAIN',verified.length===targets.length?'PASS':'INCONCLUSIVE',verified,true),targetCount:targets.length,gameResponse:{inventoryAccounted}};
   }catch(error){
     if(!actions.length){if(/^(?:CDP_|OPERATOR_|CONTROLLER_|BROWSER_)/.test(error.message))throw error;return fallback('BULK_DEPARTURE_PREPARATION_FAILED');}
     r.resources.invalidate();return reportGroup(actions,error.message,'INCONCLUSIVE',[],'POSSIBLE');
