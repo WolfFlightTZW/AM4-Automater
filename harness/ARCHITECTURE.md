@@ -19,7 +19,8 @@ Node.js 24+ supplies WebSocket, SQLite and node:test. No npm dependencies or add
 | `performance.mjs` | Bounded in-memory per-pass timings, counters and recovery-backoff classification |
 | `resource-cache.mjs` | Countdown-bound prices and receipt-accounted session inventory; invalidation, no durable balance ledger |
 | `settings.mjs`, `production-settings.json` | Validated central cadence/cache/backoff settings |
-| `cadence.mjs` | Awaited inter-pass wait with frequent ownership checks and recovery backoff |
+| `scheduler.mjs` | Session-only resource/arrival/recovery deadlines; interruptible single-owner wait and typed wakes |
+| `cadence.mjs` | Legacy bounded cadence helper retained for offline checks; production uses the deadline scheduler |
 | `fleet-activity.mjs` | Session-only waiting/resumed transitions from existing observations; unknown eligibility never proves waiting |
 | `fleet-heartbeat.mjs` | Session-only verified-departure counter and interruptible Fleet display between actions |
 | `fleet-report.mjs` | Incremental informational CSV and coverage sidecar |

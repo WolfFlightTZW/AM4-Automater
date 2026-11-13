@@ -7,7 +7,7 @@ class PreviousCadence extends ResourceCache{
 }
 export async function resourceReplay({previous=false,departures=20,inspectionMs=1600,departureMs=6500,maintenanceMs=4000}={}){
   const production=readFileSync(new URL('./production.mjs',import.meta.url),'utf8').replace(/\r\n/g,'\n');let fn=production.slice(production.indexOf('async function purchaseMarkets('),production.indexOf('\ntry{\n',production.indexOf('async function purchaseMarkets(')));
-  if(previous)fn=fn.replace('runner.markets({kinds:[kind]})','runner.markets({fresh:true,kinds:[kind]})');
+  if(previous)fn=fn.replace('runner.markets({kinds:[kind],fresh})','runner.markets({fresh:true,kinds:[kind]})');
   let now=0,cash=300000000,reads=0,visits=0,purchases=0;const stock={fuel:4000000,co2:4000000},capacity=4000000,cache=new (previous?PreviousCadence:ResourceCache)({now:()=>now});cache.batch=true;
   const report={purchases:[]},r={resources:cache,deadline:0,markets:options=>cache.read(async kinds=>{reads++;visits+=1+Number((kinds||['fuel','co2']).includes('co2'));return Object.fromEntries([['ok',true],...(kinds||['fuel','co2']).map(k=>[k,{ok:true,kind:k,pricePer1000:k==='fuel'?500:120,holding:stock[k],capacityMax:capacity,capacityUsed:capacity-stock[k],cash,nextRefreshSeconds:1200}])]);},options)};
   const action=async scenario=>{const k=scenario==='PurchaseFuel'?'fuel':'co2';await r.markets({fresh:true,kinds:[k]});await r.markets({fresh:true,kinds:[k]});cash-=Math.round((capacity-stock[k])*(k==='fuel'?500:120)/1000);stock[k]=capacity;cache.invalidate(k);await r.markets({fresh:true,kinds:[k]});purchases++;return {result:'PASS',id:'SYNTHETIC',checkpoint:'SYNTHETIC'};};

@@ -18,7 +18,7 @@ import {ForecastMonitor,notifyForecast} from './forecast-monitor.mjs';
 import {MaintenanceCache} from './maintenance-cache.mjs';
 import {classifyShutdown} from './shutdown.mjs';
 import { settings } from './settings.mjs';
-import { waitBetweenPasses } from './cadence.mjs';
+import {waitForWork,blockedResources,arrivalDeadline,schedulerDefaults} from './scheduler.mjs';
 import {PassPerformance,requiresRecoveryBackoff,defaultMaxDepartures} from './performance.mjs';
 import {identityRows} from './identity.mjs';
 import {FleetHeartbeat} from './fleet-heartbeat.mjs';
@@ -55,18 +55,18 @@ async function action(scenario,registration,operation){
   if(/^(?:OPERATOR_|CDP_|CONTROLLER_|BROWSER_AUTOMATION_|PRODUCTION_SOURCE_CHANGED)/.test(r.reason))throw Object.assign(new Error(r.reason),{processDiagnostics:r.processDiagnostics});
   active();return r;
 }
-async function purchaseMarkets(trigger){
+async function purchaseMarkets(trigger,{kinds=['fuel','co2'],fresh=false}={}){
   active();runner.deadline=Date.now()+120000;
   // Only a due resource gets a new observation/decision; actions retain fresh quote binding.
-  for(const kind of ['fuel','co2']){
+  for(const kind of kinds){
     const plan=runner.resources.purchasePlan?.(kind);
     if(plan){
       report.resourcePlans||={};report.resourcePlans[kind]=plan;
       runner.resourcePlanLogKeys||={};const key=JSON.stringify([plan.reason,plan.forecastTrusted,plan.nextFavorable]);
       if(runner.resourcePlanLogKeys[kind]!==key){runner.resourcePlanLogKeys[kind]=key;console.log(JSON.stringify({event:'RESOURCE_PURCHASE_PLAN',...plan}));}
     }
-    if(!runner.resources.purchaseDue(kind))continue;
-    const m=await runner.markets({kinds:[kind]});report.markets=m;
+    if(!fresh&&!runner.resources.purchaseDue(kind))continue;
+    const m=await runner.markets({kinds:[kind],fresh});report.markets=m;
     const d={at:new Date().toISOString(),trigger,...purchaseDecision(m,kind)};
     const currentPlan=runner.resources.purchasePlan?.(kind);
     if(d.decision==='BUY'&&currentPlan&&!currentPlan.buy){d.decision='SKIP';d.reason=currentPlan.reason;}
@@ -82,6 +82,46 @@ async function purchaseMarkets(trigger){
     if(runner.resources.recordPurchaseDecision(kind,d)){store.event('PURCHASE_DECISION',d);appendFileSync(join(root,'reports','purchase-decisions.jsonl'),JSON.stringify(d)+'\n');console.log(JSON.stringify({event:'PURCHASE_DECISION',kind:d.kind,decision:d.decision,reason:d.reason,result:d.result,reportId:d.reportId}));}save(report);
     }
   }
+}
+async function scheduleAfterPass(snapshot,recovery){
+  const assessedAt=Date.now(),fleet=await runner.fleet();
+  const context={assessedAt,fleet,held:[...report.held,...report.maintenanceActions.filter(a=>a.result==='PASS'||a.checkpoint)],recovery,recoveryMs:Math.max(cycle,settings.recoveryBackoffSeconds)*1000,activeDelayMs:cycle*1000,remainingWork:report.performance.counts.deferred>0||report.batch.recoveryBreak,deferredMaintenance:report.held.some(h=>h.reasons?.includes('MAINTENANCE_DEFERRED_BATCH_BUDGET')),fleetUnavailable:!report.idleFleet?.ok,resourceChecks:{},auditAt:assessedAt+schedulerDefaults.auditMs};
+  return waitForWork({active,context:()=>({...context,markets:runner.resources.value,resourcePlans:Object.fromEntries(['fuel','co2'].map(k=>[k,runner.resources.purchasePlan?.(k)]))}),
+    onPlan:plan=>{report.scheduler={...plan,nextWakeAt:new Date(plan.at).toISOString()};report.phase='SCHEDULER_WAITING';save(report);if(!recovery&&!report.batch.recoveryBreak)logFleetActivity(assessFleetActivity({...snapshot,fleet:context.fleet,markets:runner.resources.value},reg=>runner.holds(reg)),{nextFleetCheckAt:plan.kind==='operations'?new Date(plan.at).toISOString():undefined});},log:event=>console.log(JSON.stringify(event)),
+    wake:async plan=>{
+      active();runner.deadline=Date.now()+120000;notifyForecast(runner.forecast,'tick');
+      if(plan.kind==='operations')return {operations:true,result:'OPERATIONAL_PASS_DUE'};
+      if(plan.kind==='resource'){
+        report.phase='SCHEDULER_RESOURCE_CHECK';save(report);const before=report.purchases.length,wasSufficient=runner.resources.value?.ok&&!blockedResources(runner.resources.value).length;
+        await purchaseMarkets('SCHEDULER_RESOURCE_DEADLINE',{kinds:[plan.resource],fresh:true});context.resourceChecks[plan.resource]=Date.now();report.endingMarkets=runner.resources.value;save(report);
+        const purchased=report.purchases.slice(before),verified=purchased.some(p=>p.result==='PASS');
+        if(verified)return {operations:true,result:'PURCHASE_VERIFIED_REEVALUATE_DEPARTURES'};
+        if(purchased.some(p=>p.result!=='PASS'))return {operations:true,result:'PURCHASE_UNCERTAIN_RECONCILE'};
+        if(runner.resources.value?.ok&&!blockedResources(runner.resources.value).length&&!wasSufficient)return {operations:true,result:'AUTHORITATIVE_RESOURCE_STATE_SUFFICIENT'};
+        return {operations:false,result:'RESOURCE_CHECK_COMPLETE',decision:report.purchaseDecisions?.at(-1)?.reason,actualPrice:runner.resources.value?.[plan.resource]?.pricePer1000};
+      }
+      // A bounded safety/maintenance assessment, not a dispatch/CSV pass.
+      context.auditAt=Date.now()+schedulerDefaults.auditMs;
+      await runner.guard.check();runner.verifySource();if((await runner.dom('browserAutomation')).length)throw Error('BROWSER_AUTOMATION_ACTIVE');
+      const header=await runner.dom('inventory');
+      if(!runner.resources.observeHeader(header)){
+        await purchaseMarkets('SCHEDULER_AUTHORITATIVE_RECONCILIATION',{fresh:true});
+        if(!blockedResources(runner.resources.value).length&&runner.resources.value?.ok)return {operations:true,result:'RESOURCE_RECONCILIATION_COMPLETE'};
+      }
+      if(store.unresolved().some(a=>a.kind!=='purchase'))return {operations:true,result:'TRANSACTION_RECONCILIATION_DUE'};
+      if(!blockedResources(runner.resources.value).length){
+        const arrival=arrivalDeadline(context.fleet,context.assessedAt).earliest;
+        return arrival&&arrival.at>Date.now()?{operations:false,result:'OWNER_AND_HEADER_HEALTHY_WAITING_FOR_ARRIVAL'}:{operations:true,result:'BOUNDED_STATE_AUDIT'};
+      }
+      try{
+        runner.batchSnapshot=null;const observed=await runner.snapshot();runner.maintenanceCache.apply(observed);
+        context.fleet=observed.fleet;context.assessedAt=Date.now();context.fleetUnavailable=false;
+        if(observed.fleet.some(a=>requiredMaintenance(observed,a.registration,runner.holds(a.registration))))return {operations:true,result:'CURRENT_MAINTENANCE_ACTION_AVAILABLE'};
+      }catch(error){if(error.message!=='AM4_JAVASCRIPT_EXCEPTION'||error.rendererDescription!=='Error: UI_READINESS_TIMEOUT')throw error;context.fleetUnavailable=true;context.auditAt=Date.now()+schedulerDefaults.fallbackMs;return {operations:false,result:'UI_TIMING_UNAVAILABLE_BOUNDED_RETRY'};}
+      context.auditAt=Date.now()+schedulerDefaults.auditMs;
+      try{const shown=await runner.dom('showFleet');report.idleFleet=shown;}catch(error){if(error.message!=='AM4_JAVASCRIPT_EXCEPTION'||error.rendererDescription!=='Error: UI_READINESS_TIMEOUT')throw error;report.idleFleet={ok:false,reason:'FLEET_DISPLAY_READINESS_TIMEOUT'};console.log(JSON.stringify({event:'FLEET_DISPLAY_UNAVAILABLE',...report.idleFleet}));}
+      return {operations:false,result:'RESOURCE_BLOCK_STILL_APPLIES'};
+    }});
 }
 try{
   runner.forecast=new ForecastMonitor({directory:join(root,'reports'),...settings.forecastAdvisory,log:event=>console.log(JSON.stringify(event))});
@@ -117,7 +157,13 @@ try{
     console.log(JSON.stringify({event:'PASS_STARTED',passId:report.passId,pass:completedPasses+1}));
     stage('FLEET_ASSESSMENT');
     runner.batchSnapshot=null;runner.dispatchFlights=new Map();runner.productionPassDeadline=passDeadline;
-    let snapshot=await runner.snapshot();const suppressedBefore=runner.maintenanceCache.suppressed;const negativeHeld=runner.maintenanceCache.apply(snapshot);runner.batchSnapshot=snapshot;
+    let snapshot;
+    try{snapshot=await runner.snapshot();}catch(error){
+      if(error.message!=='AM4_JAVASCRIPT_EXCEPTION'||error.rendererDescription!=='Error: UI_READINESS_TIMEOUT')throw error;
+      active();report.status='WAITING_FOR_UI';report.phase='SCHEDULER_WAITING';report.reason='INITIAL_READ_ONLY_INSPECTION_TIMEOUT';save(report);
+      await waitForWork({active,context:()=>({inspectionUnavailable:true,assessedAt:Date.parse(report.started)}),log:e=>console.log(JSON.stringify(e)),onPlan:p=>{report.scheduler={...p,nextWakeAt:new Date(p.at).toISOString()};save(report);},wake:async()=>({operations:true,result:'READ_ONLY_INSPECTION_RETRY'})});continue;
+    }
+    const suppressedBefore=runner.maintenanceCache.suppressed;const negativeHeld=runner.maintenanceCache.apply(snapshot);runner.batchSnapshot=snapshot;
     for(const a of store.unresolved().filter(a=>a.kind!=='purchase')){
       if(['repair','check'].includes(a.kind)){
         const o=reconcileRecovery(a,snapshot);a.scheduleSeen ||= o.scheduleSeen;a.state=o.state;a.lastObservation=o;store.saveAction(a);
@@ -224,8 +270,7 @@ try{
     // Serialized passes: an unresolved transaction backs off rather than tight-looping.
     const waitingForRecovery=requiresRecoveryBackoff(store.unresolved(),{scheduleComplete:snapshot.schedule?.complete===true,maintenanceComplete:snapshot.maintenance?.ok===true});
     if(waitingForRecovery)runner.resources.invalidate();
-    if(!waitingForRecovery&&!report.batch.recoveryBreak)logFleetActivity(assessFleetActivity({...snapshot,markets:runner.resources.value},reg=>runner.holds(reg)),{nextFleetCheckAt:new Date(Date.now()+cycle*1000).toISOString()});
-    Object.assign(report,await waitBetweenPasses({active,recovery:waitingForRecovery,seconds:cycle}));save(report);
+    Object.assign(report,await scheduleAfterPass(snapshot,waitingForRecovery));save(report);
     store.event('PASS_TIMING',{passId:report.passId,durationMs:report.durationMs,idleMs:report.idleMs,idleReason:report.idleReason});
   }
 }catch(error){
