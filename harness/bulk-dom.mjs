@@ -15,8 +15,9 @@ export function bulkDom(doc,method,args={}){
     const sources=[button.getAttribute('onclick')||'',...(events?.click||[]).map(e=>String(e.handler))];
     const bindings=sources.filter(s=>/route_depart\.php\?mode=all/.test(s)).map(s=>s.match(/\bids=([0-9,]+)(?=['"&]|$)/)?.[1]).filter(Boolean);
     if(bindings.length!==1)return null;const routeIds=bindings[0].split(',');
-    const count=Number(text(button).match(/\d+/)?.[0]);
-    if(new Set(routeIds).size!==routeIds.length||routeIds.length!==count)return null;
+    const limit=Number(text(button).match(/\d+/)?.[0]),count=routeIds.length;
+    // The observed "Depart 20" label is a cohort limit; the bound handler may contain fewer routes.
+    if(new Set(routeIds).size!==count||count<1||count>limit)return null;
     return {button,routeIds,count};
   }
   const previewButtons=kind=>doc.querySelector('#maintAction')?buttons(doc.querySelector('#maintAction')).filter(e=>enabled(e)&&new RegExp('^Bulk '+(kind==='check'?'(?:A[- ]?)?Check':'Repair')+'$','i').test(text(e))&&!/mode=do/.test(e.getAttribute('onclick')||'')):[];

@@ -47,6 +47,10 @@ test('observed native jQuery Depart control is bound by explicit route IDs and r
  const doc=new Element({queries:{'#departAll':[button],'#landedList .flight-list[data-reg]':rows}});globalThis.jQuery={_data:()=>({click:[{handler:function(){Ajax('route_depart.php?mode=all&ref=list&ids=501,502','runme',this);}}]})};
  try{assert.equal(bulkDom(doc,'departureCommit',{ids:['101','102'],routeIds:['501','502']}).clicked,true);assert.equal(button.clicks,1);button.disabled=true;assert.equal(bulkDom(doc,'departureCommit',{ids:['101','102'],routeIds:['501','502']}).clicked,false);button.disabled=false;assert.equal(bulkDom(doc,'departureCommit',{ids:['101','102'],routeIds:['501','503']}).clicked,false);assert.equal(button.clicks,1);}finally{delete globalThis.jQuery;}
 });
+test('native Depart limit label may exceed the exact bound cohort size, never the reverse',()=>{
+ globalThis.getComputedStyle=()=>({visibility:'visible'});const button=new Element({id:'departAll',text:'Depart 20'}),doc=new Element({queries:{'#departAll':[button]}});globalThis.jQuery={_data:()=>({click:[{handler:function(){Ajax('route_depart.php?mode=all&ids=501,502','runme',this);}}]})};
+ try{const cap=bulkDom(doc,'inspect');assert.equal(cap.departureCount,2);assert.deepEqual(cap.departureRouteIds,['501','502']);button.innerText='Depart 1';assert.equal(bulkDom(doc,'inspect').departureControls,0);}finally{delete globalThis.jQuery;}
+});
 test('benchmark executes the real production purchase coordinator and eliminates sufficient-stock per-aircraft screens',async()=>{const before=await resourceReplay({previous:true}),after=await resourceReplay();assert.equal(before.departures,20);assert.equal(before.purchases,40);assert.equal(before.resourceObservations,161);assert.equal(after.departures,20);assert.equal(after.purchases,0);assert.equal(after.resourceObservations,1);assert.equal(after.resourceScreenVisits,2);assert.ok(after.modeledDurationMs<before.modeledDurationMs);});
 test('real bulk A-check DOM selects 19/0-hour aircraft and never selects 20/21-hour aircraft',async()=>{
  globalThis.getComputedStyle=()=>({visibility:'visible'});
