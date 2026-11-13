@@ -126,19 +126,20 @@ export function createDom(doc = document, repairWearThreshold = 20) {
   async function showRoutes({refresh=false}={}){
     const ready=()=>{const b=doc.querySelector('#departAll'),popup=doc.querySelector('#popup.show');return visible(b)&&(!visible(popup)||popup.contains(b));};
     const empty=()=>{const root=doc.getElementById('routeAction');return visible(root)&&/THERE ARE NO ACTIVE ROUTES/i.test(clean(root.innerText));};
-    const result=()=>{if(empty()&&!ready()){
+    const listed=()=>{const root=doc.getElementById('routeAction');return visible(root)&&/\b\d+ ROUTES\b/i.test(clean(root.innerText));};
+    const result=()=>{if((empty()||listed())&&!ready()){
       const popup=doc.querySelector('#popup.show'),close=[...(popup?.querySelectorAll('[onclick]')||[])].filter(e=>enabled(e)&&/^closePop\(\)/.test(e.getAttribute('onclick')||''));
       // An empty paged Routes list is not a veto on the current native Fleet-map control.
       if(close.length===1)close[0].click();
-    }return {ok:true,screen:'ROUTES',empty:!ready()&&empty()};};
-    if(!refresh&&(ready()||empty()))return result();
+    }return {ok:true,screen:'ROUTES',empty:!ready()&&(empty()||listed())};};
+    if(!refresh&&(ready()||empty()||listed()))return result();
     const previous=doc.querySelector('#departAll'),previousRoot=doc.getElementById('routeAction'),previousContent=previousRoot?.innerHTML;let changed=false;
     const observer=previousRoot&&globalThis.MutationObserver?new MutationObserver(()=>{changed=true;}):null;observer?.observe(previousRoot,{childList:true,subtree:true});
     const tab=[...doc.querySelectorAll('button[onclick]')].filter(e=>enabled(e)&&/^Routes(?:\s|\()/i.test(clean(e.innerText))&&/Ajax\(['"]routes\.php['"],\s*['"]routeAction['"]/.test(e.getAttribute('onclick')||''));
     if(tab.length===1)tab[0].click();else{
       const menu=doc.querySelector('#mapRoutes');if(!enabled(menu)||!/menuFleet\(['"]Routes['"]\)/.test(menu.getAttribute('onclick')||''))return {ok:false,reason:'ROUTES_MENU_UNAVAILABLE'};menu.click();
     }
-    try{await waitFor(()=>(doc.querySelector('#departAll')!==previous&&ready())||(empty()&&(changed||doc.getElementById('routeAction')!==previousRoot||doc.getElementById('routeAction')?.innerHTML!==previousContent)));return result();}finally{observer?.disconnect();}
+    try{await waitFor(()=>(doc.querySelector('#departAll')!==previous&&ready())||((empty()||listed())&&(changed||doc.getElementById('routeAction')!==previousRoot||doc.getElementById('routeAction')?.innerHTML!==previousContent)));return result();}finally{observer?.disconnect();}
   }
   function rootContent(){return doc.querySelector('#maintAction')?.innerHTML;}
   function inspectPlanner(registration, kind, id, openedForTarget=false) {
