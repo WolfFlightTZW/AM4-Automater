@@ -16,6 +16,7 @@ import { purchaseDecision } from './purchasing.mjs';
 import {attachResourceStrategy} from './resource-strategy.mjs';
 import {ForecastMonitor,notifyForecast} from './forecast-monitor.mjs';
 import {MaintenanceCache} from './maintenance-cache.mjs';
+import {classifyShutdown} from './shutdown.mjs';
 import { settings } from './settings.mjs';
 import { waitBetweenPasses } from './cadence.mjs';
 import {PassPerformance,requiresRecoveryBackoff,defaultMaxDepartures} from './performance.mjs';
@@ -49,10 +50,10 @@ async function action(scenario,registration,operation){
   report.performance=runner.performance.report();
   report.actions.push({scenario,registration,id:r.id,checkpoint:r.checkpoint,result:r.result,reason:r.reason,submitted:r.actionAttempted?.submitted,inventoryAccounted:r.gameResponse?.inventoryAccounted,inventoryIssue:runner.resources.lastIssue});
   if(r.checkpoint){const a=store.get(r.checkpoint);report.actions.at(-1).state=a.state;}
-  report.activeAction=null;save(report);active();
+  report.activeAction=null;save(report);
   if((['Departure','Repair','ACheck','BulkDeparture','BulkMaintenance'].includes(scenario))&&r.result==='PASS')logFleetActivity({actionableAircraft:r.verified?.length||1,unknown:1});
   if(/^(?:OPERATOR_|CDP_|CONTROLLER_|BROWSER_AUTOMATION_|PRODUCTION_SOURCE_CHANGED)/.test(r.reason))throw Object.assign(new Error(r.reason),{processDiagnostics:r.processDiagnostics});
-  return r;
+  active();return r;
 }
 async function purchaseMarkets(trigger){
   active();runner.deadline=Date.now()+120000;
@@ -95,6 +96,7 @@ try{
   runner.cdp=await Cdp.connect(10000,runner.operator);
   if((await runner.dom('browserAutomation')).length)throw new Error('BROWSER_AUTOMATION_ACTIVE');
   store.event('PRODUCTION_STARTED',{parentPid:process.ppid,pid:process.pid,exclusion:runner.guard.exclusionEvidence,cycle,maxDepartures,maxMaintenance});
+  {const state=runner.operator.control.status();console.log(JSON.stringify({event:'CONTROLLER_STARTED',at:new Date().toISOString(),pid:process.pid,parentPid:process.ppid,mode:state.mode,revision:state.revision,request:state.lastModeRequest}));}
   runner.confirm=async(kind,target,cost)=>{
     if(!['repair','check','departure','purchase'].includes(kind)||runner.budget<1)throw new Error('PRODUCTION_ACTION_NOT_AUTHORIZED');
     active();if(!(runner.batchSnapshot&&kind==='departure'))await runner.guard.check();runner.verifySource();
@@ -208,7 +210,7 @@ try{
     report.aCheck=report.maintenanceActions.some(a=>a.kind==='check')?'ATTEMPTED_ELIGIBLE':'SKIPPED_NO_ELIGIBLE_AIRCRAFT_IN_BATCH';
     runner.performance.counts.deferred=candidates.length-runner.performance.counts.examined;
     stage('FLEET_CSV');
-    try{if(eligibleCandidates.some(a=>a.location==='landedList'&&!report.verifiedDepartures.includes(a.registration)))report.fleetCsv={result:'DEFERRED',reason:'DISPATCH_BACKLOG_PRIORITY'};else report.fleetCsv=await runner.measure('fleetReport',()=>runner.measure('navigation',()=>highCycleReport(runner,{limit:pool.length>20?Math.min(csvBatch,2):csvBatch,fleetObservation:snapshot.fleet})));}catch(error){active();report.fleetCsv={result:'INCONCLUSIVE',reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'REPORT_FAILED'};}
+    try{if(eligibleCandidates.some(a=>a.location==='landedList'&&!report.verifiedDepartures.includes(a.registration)&&!report.held.some(h=>h.registration===a.registration)))report.fleetCsv={result:'DEFERRED',reason:'DISPATCH_BACKLOG_PRIORITY'};else report.fleetCsv=await runner.measure('fleetReport',()=>runner.measure('navigation',()=>highCycleReport(runner,{limit:pool.length>20?Math.min(csvBatch,2):csvBatch,fleetObservation:snapshot.fleet})));}catch(error){active();report.fleetCsv={result:'INCONCLUSIVE',reason:/^[A-Z0-9_]+$/.test(error.message)?error.message:'REPORT_FAILED'};}
     stage('ENDING_REFRESH');runner.resources.observeHeader(await runner.dom('inventory'));const endingFleet=snapshot.fleet;report.endingFleet={count:endingFleet.length,byLocation:endingFleet.reduce((out,a)=>(out[a.location]=(out[a.location]||0)+1,out),{})};if(['fuel','co2'].some(k=>runner.resources.purchaseDue(k)))await purchaseMarkets('BATCH_END_REFRESH');report.endingMarkets=runner.resources.value;report.resourceCache={...runner.resources.metrics};report.inventoryReconciliation=runner.resources.lastReconciliation;
     await runner.measure('navigation',()=>runner.dom('showFleet'));
     report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);report.resourceCache={...runner.resources.metrics};report.batch.backlogAfterObserved=snapshot.fleet.filter(a=>['landedList','parkedList'].includes(a.location)).length;report.batch.verifiedBacklogReduction=report.verifiedDepartures.length;report.performance=runner.performance.report();report.batchInventoryMetrics=Object.fromEntries(Object.entries(runner.resources.metrics).map(([k,v])=>[k,v-(cacheAtStart[k]||0)]));report.departuresPerMinute=report.durationMs?report.verifiedDepartures.length*60000/report.durationMs:0;report.status='COMPLETED_OPERATIONS_PASS';report.phase='WAITING';save(report);
@@ -227,10 +229,11 @@ try{
   if(!runner.operator&&reason==='INTERFACE_ALREADY_OWNED_OR_UNCERTAIN'){
     console.log(JSON.stringify({event:'START_IGNORED',reason:'CONTROLLER_ALREADY_RUNNING_OR_INTERFACE_RESERVED'}));
   }else{
-  report ||= {started:new Date().toISOString(),actions:[]};report.status=reason.startsWith('OPERATOR_')?'STOPPED_OPERATOR_PAUSED':'STOPPED_SAFELY';report.reason=reason;if(error.rendererDescription)report.rendererDescription=error.rendererDescription;if(runner.performance)report.performance=runner.performance.report();if(error.processDiagnostics)report.processDiagnostics=error.processDiagnostics;report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);save(report);
-  console.log(JSON.stringify({event:'CONTROLLER_STOPPED',reason}));if(!reason.startsWith('OPERATOR_'))process.exitCode=2;
+  let controlState={};try{controlState=runner.operator?.control.status()||{};}catch{}const shutdown=classifyShutdown(error,controlState);report ||= {started:new Date().toISOString(),actions:[]};report.shutdown=shutdown;report.status=shutdown.category.endsWith('_PAUSE')?'STOPPED_PAUSED':'STOPPED_SAFELY';report.reason=reason;if(error.rendererDescription)report.rendererDescription=error.rendererDescription;if(runner.performance)report.performance=runner.performance.report();if(error.processDiagnostics)report.processDiagnostics=error.processDiagnostics;report.finished=new Date().toISOString();report.durationMs=Date.now()-Date.parse(report.started);save(report);
+  console.log(JSON.stringify({event:'CONTROLLER_STOPPED',at:new Date().toISOString(),pid:process.pid,reason:shutdown.category,cause:reason,source:shutdown.source,request:shutdown.request,ownershipLoss:shutdown.ownershipLoss}));if(!shutdown.category.endsWith('_PAUSE'))process.exitCode=2;
   }
 }finally{
-  if(runner.operator){try{const s=runner.operator.control.status();if(s.owner?.token===runner.operator.token&&s.mode==='AUTOMATIC')runner.operator.control.request('PAUSED/MANUAL');}catch{}}
+  if(report?.status==='COMPLETED_OPERATIONS_PASS')console.log(JSON.stringify({event:'CONTROLLER_STOPPED',at:new Date().toISOString(),pid:process.pid,reason:'NORMAL_SHUTDOWN',cause:'BOUNDED_RUN_COMPLETED'}));
+  if(runner.operator){try{const s=runner.operator.control.status();if(s.owner?.token===runner.operator.token&&s.mode==='AUTOMATIC')runner.operator.control.request('PAUSED/MANUAL',{source:'AUTOMATION',reason:'CONTROLLER_FINALIZER'});}catch{}}
   runner.close();store.close();
 }

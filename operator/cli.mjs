@@ -22,9 +22,9 @@ try{
   }
   control=new OperatorControl(root);
   if(action==='status')result=control.status();
-  else if(action==='pause')result=control.request('PAUSED/MANUAL');
-  else if(action==='automatic')result=control.request('AUTOMATIC',{expectedRevision});
-  else if(action==='testing')result=control.request('TESTING');
+  else if(action==='pause')result=control.request('PAUSED/MANUAL',{source:options.source||'UNSPECIFIED',reason:options.reason||'CLI_PAUSE_REQUEST'});
+  else if(action==='automatic')result=control.request('AUTOMATIC',{expectedRevision,source:options.source||'UNSPECIFIED',reason:options.reason||'CLI_RESUME_REQUEST'});
+  else if(action==='testing')result=control.request('TESTING',{source:options.source||'UNSPECIFIED',reason:options.reason||'CLI_TESTING_REQUEST'});
   else if(action==='acquire')result=control.acquire(options.role,Number(options.pid));
   else if(action==='begin')result={id:control.begin(options.token,options.name)};
   else if(action==='step')result=control.step(options.token,options.name,readFileSync(0,'utf8'),{irreversible:options.irreversible==='true',browserOffsetMs:Number(options.offset||0)});

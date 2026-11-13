@@ -39,7 +39,7 @@ export async function bulkMaintenance(r,snapshot,targets,kind){
   }
 }
 export async function bulkDeparture(r,snapshot,targets){
-  const routes=await r.dom('showRoutes',[{refresh:true}]);if(!routes.ok)return fallback(routes.reason);
+  const routes=await r.dom('showRoutes',[{refresh:true}]);if(!routes.ok)return fallback(routes.reason);if(routes.empty)return fallback('NO_ACTIVE_NATIVE_ROUTES');
   let capability=await read(r,'inspect');if(capability.departureControls!==1)return fallback('BULK_DEPARTURE_CONTROL_UNAVAILABLE');
   // Arrivals can change the native group while the initial maintenance/resource preparation runs.
   // Refresh only at this meaningful change, once; never chase a moving group indefinitely.

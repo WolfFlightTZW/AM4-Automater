@@ -27,7 +27,7 @@ export class OperatorControl {
       if(stale){
         state.uncertainty={reason:'OWNER_LOST_OR_HEARTBEAT_STALE',action:state.action?.name||null,at:this.now()};
         state.quarantineUntil=Math.max(state.quarantineUntil,state.owner.commandUntil||0);
-        state.owner=null;state.action=null;state.mode='PAUSED/MANUAL';state.revision++;
+        state.lastOwnershipLoss={reason:!this.alive(state.owner.pid)?'OWNER_PROCESS_EXITED':'HEARTBEAT_STALE',pid:state.owner.pid,at:this.now(),action:state.action?.name||null};state.owner=null;state.action=null;this.internalPause(state,state.lastOwnershipLoss.reason);state.revision++;
         this.record('STALE_OWNER_REVOKED',state.uncertainty);
       }
       const result=fn(state);
@@ -46,12 +46,14 @@ export class OperatorControl {
       lastCompletedAction:s.lastCompleted?.name||null};
   }
   status(){return this.transaction(s=>this.view(s));}
-  request(mode,{expectedRevision}={}){
+  internalPause(s,reason){if(s.mode!=='PAUSED/MANUAL'){s.lastModeRequest={mode:'PAUSED/MANUAL',source:'AUTOMATION',kind:'SAFETY',reason,pid:process.pid,at:this.now()};s.mode='PAUSED/MANUAL';}}
+  request(mode,{expectedRevision,source='UNSPECIFIED',reason='EXPLICIT_MODE_REQUEST'}={}){
+    if(!['UNSPECIFIED','HUMAN_OPERATOR','DEPLOYMENT','AUTOMATION'].includes(source))throw new Error('INVALID_REQUEST_SOURCE');
     if(!MODES.includes(mode))throw new Error('INVALID_OPERATOR_MODE');
     return this.transaction(s=>{
       if(expectedRevision!==undefined&&(!Number.isSafeInteger(expectedRevision)||s.revision!==expectedRevision))throw new Error('OPERATOR_MODE_CHANGED_DURING_PREFLIGHT');
       if(mode!=='PAUSED/MANUAL'&&s.quarantineUntil>this.now())throw new Error('OLD_COMMAND_MAY_STILL_BE_RUNNING');
-      s.mode=mode;s.revision++;this.settle(s);this.record('OPERATOR_MODE_REQUESTED',{mode,revision:s.revision});return this.view(s);
+      s.mode=mode;s.revision++;s.lastModeRequest={mode,source,kind:'REQUEST',reason,pid:process.pid,parentPid:process.ppid,at:this.now(),revision:s.revision};this.settle(s);this.record('OPERATOR_MODE_REQUESTED',{mode,revision:s.revision});return this.view(s);
     });
   }
   acquire(role,pid=process.pid){
@@ -66,7 +68,7 @@ export class OperatorControl {
   settle(s){
     if(s.owner&&s.mode!==s.owner.role&&!s.owner.commandUntil&&(!s.action||!s.action.irreversible)){
       if(s.action)s.lastCompleted={...s.action,finished:this.now(),outcome:'CANCELLED_BEFORE_SUBMISSION'};
-      s.owner=null;s.action=null;this.record('PAUSE_ACKNOWLEDGED',{});
+      s.lastOwnershipLoss={reason:'MODE_CHANGE_RELEASE',pid:s.owner.pid,at:this.now(),requestSource:s.lastModeRequest?.source||'UNSPECIFIED'};s.owner=null;s.action=null;this.record('PAUSE_ACKNOWLEDGED',{});
     }
   }
   heartbeat(token){return this.transaction(s=>{this.owned(s,token);return true;});}
@@ -92,7 +94,7 @@ export class OperatorControl {
   }
   endStep(token,{implicit=false,outcome='RETURNED'}={}){return this.transaction(s=>{
     this.owned(s,token);
-    if(outcome==='UNKNOWN'){s.uncertainty={reason:'COMMAND_OUTCOME_UNKNOWN',action:s.action?.name||null,at:this.now()};s.quarantineUntil=Math.max(s.quarantineUntil,s.owner.commandUntil||0);s.mode='PAUSED/MANUAL';}
+    if(outcome==='UNKNOWN'){s.uncertainty={reason:'COMMAND_OUTCOME_UNKNOWN',action:s.action?.name||null,at:this.now()};s.quarantineUntil=Math.max(s.quarantineUntil,s.owner.commandUntil||0);this.internalPause(s,'COMMAND_OUTCOME_UNKNOWN');}
     else s.owner.commandUntil=0;
     if(implicit&&s.action){s.lastCompleted={...s.action,finished:this.now(),outcome};s.action=null;} this.settle(s);
     return this.view(s);
@@ -100,14 +102,14 @@ export class OperatorControl {
   end(token,outcome='RETURNED'){return this.transaction(s=>{
     this.owned(s,token);
     if(s.action){s.lastCompleted={...s.action,finished:this.now(),outcome};this.record('ACTION_FINISHED',s.lastCompleted);s.action=null;}
-    if(outcome==='UNKNOWN'){s.mode='PAUSED/MANUAL';s.uncertainty={reason:'ACTION_OUTCOME_UNKNOWN',at:this.now()};s.quarantineUntil=Math.max(s.quarantineUntil,s.owner.commandUntil||0);} this.settle(s);
+    if(outcome==='UNKNOWN'){this.internalPause(s,'ACTION_OUTCOME_UNKNOWN');s.uncertainty={reason:'ACTION_OUTCOME_UNKNOWN',at:this.now()};s.quarantineUntil=Math.max(s.quarantineUntil,s.owner.commandUntil||0);} this.settle(s);
     return this.view(s);
   });}
   release(token){return this.transaction(s=>{
     if(!s.owner||s.owner.token!==token)return this.view(s);
     if(s.action||s.owner.commandUntil>this.now()){
       s.uncertainty={reason:'OWNER_RELEASED_WITH_UNFINISHED_ACTION',action:s.action?.name||null,at:this.now()};
-      s.quarantineUntil=Math.max(s.quarantineUntil,s.owner.commandUntil||0);s.mode='PAUSED/MANUAL';
+      s.quarantineUntil=Math.max(s.quarantineUntil,s.owner.commandUntil||0);this.internalPause(s,'OWNER_RELEASED_WITH_UNFINISHED_ACTION');
     }
     s.owner=null;s.action=null;this.record('INTERFACE_RELEASED',{});return this.view(s);
   });}
@@ -120,7 +122,7 @@ export class OperatorSession {
   end(outcome){return this.control.end(this.token,outcome);}
   step(name,expression,options){return this.control.step(this.token,name,expression,{...options,browserOffsetMs:this.browserClockOffset||0});}
   endStep(options){return this.control.endStep(this.token,options);}
-  assertCanCommit(){const s=this.control.status();if(s.mode!==this.role||s.owner?.token!==this.token)throw new Error('OPERATOR_PAUSE_REQUESTED');}
+  assertCanCommit(){const s=this.control.status();if(s.owner?.token!==this.token)throw new Error('OPERATOR_OWNERSHIP_LOST');if(s.mode!==this.role)throw new Error('OPERATOR_PAUSE_REQUESTED');}
   close(){if(this.closed)return;this.closed=true;clearInterval(this.timer);try{this.control.release(this.token);}finally{this.control.close();}}
 }
 

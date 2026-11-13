@@ -1,9 +1,9 @@
 #requires -Version 5.1
 # Normal unattended launcher; all actions use the existing Node/SQLite worker.
-param([int]$CycleSeconds=0,[int]$MaxDeparturesPerPass=1000,[int]$MaxMaintenancePerPass=20,[int]$CsvBatchSize=10,[int]$MaximumPassSeconds=600,[int]$MaxPasses=0,[switch]$Resume,[switch]$EnableGuardedMaintenance)
+param([int]$CycleSeconds=0,[int]$MaxDeparturesPerPass=1000,[int]$MaxMaintenancePerPass=20,[int]$CsvBatchSize=10,[int]$MaximumPassSeconds=600,[int]$MaxPasses=0,[switch]$Resume,[switch]$EnableGuardedMaintenance,[ValidateSet('HUMAN_OPERATOR','DEPLOYMENT','AUTOMATION','UNSPECIFIED')][string]$RequestSource='UNSPECIFIED')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'operator\Operator-Library.ps1')
-if($Resume){$null=Invoke-AM4Control 'automatic'}
+if($Resume){$null=Invoke-AM4Control 'automatic' @('--source',$RequestSource)}
 if((Invoke-AM4Control 'status').mode -ne 'AUTOMATIC'){Write-Host 'Paused. Start explicitly with -Resume, Start-AM4.cmd, or RESUME AUTOMATIC in Operator Control.';return}
 $logDir=Join-Path $PSScriptRoot 'logs'
 if(!(Test-Path -LiteralPath $logDir)){New-Item -ItemType Directory -Path $logDir|Out-Null}

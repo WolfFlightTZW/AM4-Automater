@@ -39,7 +39,7 @@ public sealed class AM4OperatorWindow : Form {
         throw new InvalidOperationException("Node.js 24 is required on PATH.");
     }
     Dictionary<string, object> Command(string command) {
-        var start = new ProcessStartInfo(node, "\"" + Path.Combine(root, "cli.mjs") + "\" " + command);
+        var start = new ProcessStartInfo(node, "\"" + Path.Combine(root, "cli.mjs") + "\" " + command + (command == "status" ? "" : " --source HUMAN_OPERATOR"));
         start.UseShellExecute = false; start.CreateNoWindow = true;
         start.RedirectStandardOutput = true; start.RedirectStandardError = true;
         start.StandardOutputEncoding = System.Text.Encoding.UTF8;

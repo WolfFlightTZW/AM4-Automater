@@ -41,3 +41,7 @@ node --test harness/tests/offline.test.mjs harness/tests/purchasing.test.mjs har
 ```
 
 Use meaningful targeted tests for small changes, and broader regression checks for transaction, policy, ownership or launcher changes. Do not submit unnecessary game transactions just to prove known behavior. Report live verification separately from offline tests and code changes.
+
+## Pause and shutdown attribution
+
+Codex maintenance/deployment pauses must explicitly pass `-RequestSource DEPLOYMENT` (PowerShell) or `--source DEPLOYMENT` (CLI), record the reason in the development report, and never describe them as human operator actions. Preserve the original failure code when reporting ownership loss. An unclassified request is unknown, not evidence of human activity.

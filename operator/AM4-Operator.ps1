@@ -1,5 +1,5 @@
 #requires -Version 5.1
-param([ValidateSet('Panel','Pause','Resume','Testing','Status','Diagnostics')][string]$Action='Panel')
+param([ValidateSet('Panel','Pause','Resume','Testing','Status','Diagnostics')][string]$Action='Panel',[ValidateSet('HUMAN_OPERATOR','DEPLOYMENT','AUTOMATION','UNSPECIFIED')][string]$RequestSource='UNSPECIFIED')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Operator-Library.ps1')
 if($Action -eq 'Diagnostics'){$state=Invoke-AM4Control 'process-diagnostics';$state|ConvertTo-Json -Depth 6;exit 0}
@@ -10,7 +10,7 @@ function Start-Controller {
 }
 if($Action -ne 'Panel'){
     $command=switch($Action){'Pause'{'pause'}'Resume'{'automatic'}'Testing'{'testing'}'Status'{'status'}}
-    $state=Invoke-AM4Control $command
+    $state=Invoke-AM4Control $command @('--source',$RequestSource)
     if($Action -eq 'Resume'){Start-Controller}
     Write-Host ("MODE: {0}`n{1}`nActive: {2}`nLast completed: {3}" -f $state.mode,$state.display,$state.activeAction,$state.lastCompletedAction)
     if($Action -eq 'Pause'){
@@ -39,7 +39,7 @@ function Refresh-State {
 }
 foreach($spec in @(@('PAUSE / MANUAL',16,'pause'),@('RESUME AUTOMATIC',210,'automatic'),@('ENTER TESTING',404,'testing'))){
     $button=New-Object Windows.Forms.Button;$button.Text=$spec[0];$button.Location=New-Object Drawing.Point($spec[1],165);$button.Size=New-Object Drawing.Size(178,38);$button.Tag=$spec[2]
-    $button.Add_Click({param($sender,$eventArgs)try{$null=Invoke-AM4Control ([string]$sender.Tag);if($sender.Tag -eq 'automatic'){Start-Controller};Refresh-State}catch{[Windows.Forms.MessageBox]::Show($_.Exception.Message,'AM4 control')|Out-Null}})
+    $button.Add_Click({param($sender,$eventArgs)try{$null=Invoke-AM4Control ([string]$sender.Tag) @('--source','HUMAN_OPERATOR');if($sender.Tag -eq 'automatic'){Start-Controller};Refresh-State}catch{[Windows.Forms.MessageBox]::Show($_.Exception.Message,'AM4 control')|Out-Null}})
     $form.Controls.Add($button)
 }
 Write-Output 'Operator controls constructed.'
