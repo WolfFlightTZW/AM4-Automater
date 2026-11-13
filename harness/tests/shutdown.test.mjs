@@ -14,3 +14,7 @@ test('the production action path preserves OWNERSHIP_LOST instead of overwriting
 test('an observed empty Routes response is ready even without a native Depart button',async()=>{
  globalThis.getComputedStyle=()=>({visibility:'visible'});const root=new Element({text:'Routes (0) THERE ARE NO ACTIVE ROUTES'});root.innerHTML='old';const tab=new Element({text:'Routes (0)',attrs:{onclick:"Ajax('routes.php','routeAction',this);"}});tab.onClick=()=>{root.innerHTML='new empty response';};const doc=new Element({queries:{'#routeAction':[root],'button[onclick]':[tab]}});const result=await createDom(doc).showRoutes({refresh:true});assert.equal(result.ok,true);assert.equal(result.empty,true);assert.equal(tab.clicks,1);
 });
+test('an empty Routes popup cannot hide an available native Fleet-map Depart control',async()=>{
+ globalThis.getComputedStyle=()=>({visibility:'visible'});const root=new Element({text:'THERE ARE NO ACTIVE ROUTES'}),button=new Element({text:'Depart 20'}),close=new Element({attrs:{onclick:"closePop();document.getElementById('rewardPopup').style.display='none';"}}),popup=new Element({queries:{'[onclick]':[close]}});popup.contains=()=>false;close.onClick=()=>{popup.shown=false;};const doc=new Element({queries:{'#routeAction':[root],'#departAll':[button],'#popup.show':[popup]}});
+ const result=await createDom(doc).showRoutes();assert.equal(result.ok,true);assert.equal(result.empty,false);assert.equal(close.clicks,1);assert.equal(button.clicks,0);
+});
