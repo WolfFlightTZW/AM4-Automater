@@ -46,15 +46,15 @@ export class Runner {
     this.sequence++;
     return value;
   }
-  dom(method,args=[]){const read=()=>this.evaluate(domExpression(method,args),'DOM.'+method);const category={openPlanner:'navigation',flight:'flightInspection',receipt:'receiptInspection',departureObservation:'targetInspection',inventory:'headerInspection'}[method];return category?this.measure(category,read):read();}
+  dom(method,args=[]){if(method==='openPlanner')this.maintenanceView=null;const read=()=>this.evaluate(domExpression(method,args),'DOM.'+method);const category={openPlanner:'navigation',flight:'flightInspection',receipt:'receiptInspection',departureObservation:'targetInspection',inventory:'headerInspection'}[method];return category?this.measure(category,read):read();}
   async nav(view) {
-    if(this.batchSnapshot&&this.maintenanceView===view){const current=await this.dom(view==='plan'?'maintenance':'schedule');if(view==='plan'?current.ok:current.complete)return;}
+    if(this.batchSnapshot&&this.maintenanceView===view){const current=await this.dom(view==='plan'?'maintenance':'schedule');if(view==='plan'?current.ok&&current.listVisible!==false:current.complete)return;}
     const result=await this.measure('navigation',()=>this.dom('navigate',[view]));if(!result.ok)throw new Error(result.reason);this.maintenanceView=view;
   }
   measure(name,operation){if(!this.performance)return operation();return name==='navigation'&&this.actionInProgress?this.performance.measure('actionNavigation',()=>this.performance.measure(name,operation)):this.performance.measure(name,operation);}
   async markets({fresh=false,kinds}={}) {
     try{this.operator?.assertCanCommit();}catch(error){this.resources.invalidate();throw error;}
-    return this.resources.read(requestedKinds=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(marketExpression(this.source.blocks.marketJs,requestedKinds),'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);if(value.inspectionMs){this.performance?.count('resourceScreenVisits',1+Number(Number.isFinite(value.inspectionMs.co2)));this.performance?.count('resourceObservations');}notifyForecast(this.forecast,'observeMarkets',value);return value;}),{fresh,kinds});
+    const reads=this.resources.metrics.reads;const result=await this.resources.read(requestedKinds=>this.measure('resourceInspection',async()=>{const value=await this.measure('navigation',()=>this.evaluate(marketExpression(this.source.blocks.marketJs,requestedKinds),'source.marketJs'));for(const kind of ['fuel','co2'])if(Number.isFinite(value.inspectionMs?.[kind]))this.performance?.record(kind+'Inspection',value.inspectionMs[kind]);if(value.inspectionMs){this.performance?.count('resourceScreenVisits',1+Number(Number.isFinite(value.inspectionMs.co2)));this.performance?.count('resourceObservations');}notifyForecast(this.forecast,'observeMarkets',value);return value;}),{fresh,kinds});if(result?.ok&&this.resources.metrics.reads>reads)this.resources.anchorHeader(await this.dom('inventory'));return result;
   }
   async fleet() { const rows=await this.measure('fleetScan',()=>this.evaluate(this.source.blocks.fleetJs,'source.fleetJs'));this.aircraftIds.clear();for(const a of rows){if(validAircraftId(a.aircraftId)&&rows.filter(r=>r.registration===a.registration).length===1)this.aircraftIds.set(a.registration,a.aircraftId);if(a.registration==='N-145'&&validAircraftId(a.aircraftId))this.excludedIds.add(a.aircraftId);}return rows; }
   async snapshot({ markets = false } = {}) {
@@ -154,12 +154,12 @@ export class Runner {
     if(quote.ok===false&&['MAINTENANCE_CONTROL_DISABLED','MAINTENANCE_BASE_UNAVAILABLE'].includes(quote.reason)&&quote.unavailable===true){
       report.reason='MAINTENANCE_UNAVAILABLE';report.endingState={quote};return;
     }
-    if (!quote.ok || !eligibility.row.availableActions.includes(kind)) throw new Error('PLANNER_NOT_ELIGIBLE');
+    if (!quote.ok) throw new Error('PLANNER_NOT_ELIGIBLE');
     if (!this.options.live) { report.actionAttempted = { name: 'PlannerInspectionOnly', submitted: false }; report.endingState = { quote }; report.result = 'PASS'; report.reason = 'NO_IRREVERSIBLE_ACTION_READ_ONLY_MODE'; return; }
     await this.confirm(kind, reg, quote.cost);
     // Confirmation may take time. Refresh the actual schedule and the quote before persisting intent.
     const fresh = this.batchSnapshot?report.startingState:await this.snapshot();
-    const e = maintenanceEligibility(fresh, reg, kind, this.holds(reg));
+    const e = maintenanceEligibility(fresh, reg, kind, this.holds(reg),{requireAction:false});
     if (!e.eligible || e.row.id !== eligibility.row.id) throw new Error('ELIGIBILITY_CHANGED_AFTER_CONFIRMATION');
     const current = await this.dom(this.batchSnapshot?'inspectPlanner':'openPlanner',this.batchSnapshot?[reg,kind,e.row.id]:[{registration:reg,kind,id:e.row.id}]);
     if (!current.ok || current.cost !== quote.cost || current.time !== quote.time || current.row.wear !== quote.row.wear || current.row.hoursToCheck !== quote.row.hoursToCheck) throw new Error('QUOTE_CHANGED_AFTER_CONFIRMATION');

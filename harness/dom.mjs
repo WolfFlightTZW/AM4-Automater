@@ -24,7 +24,7 @@ export function createDom(doc = document, repairWearThreshold = 20) {
       const buttons = [...row.querySelectorAll('button,a')].filter(enabled).map(handler).filter(x => x && x.id === id && !x.commit);
       return { id, registration: String(row.dataset.reg || ''), wear: number(row.dataset.wear), hoursToCheck: number(row.dataset.hours), atBase: row.dataset.base === '1', availableActions: buttons.map(b => b.kind) };
     });
-    return { ok: records.length > 0, records, evidence: { selector: '#maintAction .maint-list-sort', rows: records.length } };
+    return { listVisible:[...doc.querySelectorAll('#maintAction .maint-list-sort')].some(visible),ok: records.length > 0, records, evidence: { selector: '#maintAction .maint-list-sort', rows: records.length } };
   }
   function schedule() {
     const root = doc.querySelector('#maintAction');

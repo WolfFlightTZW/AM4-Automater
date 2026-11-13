@@ -30,6 +30,12 @@ export function bulkDom(doc,method,args={}){
     // Attribute-addressed preview rows can bind a registration to its current fleet ID.
     // Never ignore an unknown filtered row or infer targets from a total cost alone.
     if(kind==='repair'&&!selected.length)for(const row of doc.querySelector('#repairRes')?.querySelectorAll('[data-reg]')||[]){const matches=(args.rows||[]).filter(r=>r.registration===row.dataset.reg);selected.push(/^\d+$/.test(row.dataset.id||'')?row.dataset.id:matches.length===1?matches[0].aircraftId:'UNBOUND');}
+    if(kind==='repair'&&!selected.length)for(const row of doc.querySelectorAll('#repairRes table tr')){
+      const cells=[...row.querySelectorAll('td')];if(cells.length!==3)continue;
+      const name=text(cells[0]),wear=Number(text(cells[1]).replace('%',''));
+      const matches=(args.rows||[]).filter(a=>String(a.registration).toUpperCase()===name.toUpperCase());
+      selected.push(matches.length===1&&wear>(args.repairWearThreshold??20)?matches[0].aircraftId:'UNBOUND');
+    }
     const cost=number(doc.querySelector(kind==='check'?'#dataCost':'#repairRes td.text-danger.font-weight-bold'));
     const targets=[...new Set(selected)],controls=finalButtons(kind);
     const select=doc.querySelector('#repairPct'),chosen=[...(select?.options||[])].find(o=>o.value===select.value),wearThreshold=args.repairWearThreshold??args.wearThreshold??20;

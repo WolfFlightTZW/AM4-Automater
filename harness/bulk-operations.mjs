@@ -20,7 +20,7 @@ export async function bulkMaintenance(r,snapshot,targets,kind){
   if(targets.some(a=>!maintenanceEligibility(snapshot,a.registration,kind,r.holds(a.registration),{requireAction:false}).eligible||a.status!=='landed'))return fallback('BULK_MAINTENANCE_POLICY');
   const ids=targets.map(a=>a.aircraftId);let actions=[];
   try{
-    await r.nav('plan');
+    await r.nav('plan');r.maintenanceView=null;
     const quote=await read(r,'maintenancePreview',{kind,ids,repairWearThreshold:settings.repairWearThreshold,rows:targets.map(a=>({...identityRows(snapshot,a.registration).row,aircraftId:a.aircraftId}))});
     if(!quote.ok)return fallback(quote.reason);
     if(quote.ids.length!==ids.length||!ids.every(id=>quote.ids.includes(id)))return fallback('BULK_TARGET_SET_DIFFERS');
@@ -44,35 +44,40 @@ export async function bulkDeparture(r,snapshot,targets){
   // Arrivals can change the native group while the initial maintenance/resource preparation runs.
   // Refresh only at this meaningful change, once; never chase a moving group indefinitely.
   const originalLanded=snapshot.fleet.filter(a=>a.location==='landedList'&&a.grounded==='0');
-  if(capability.departureCount!==originalLanded.length){
-    snapshot.fleet=await r.fleet();await r.nav('plan');snapshot.maintenance=await r.dom('maintenance');
+  if(capability.departureCount>originalLanded.length){
+    snapshot.fleet=await r.fleet();await r.nav('plan');snapshot.maintenance=await r.dom('maintenance');r.maintenanceCache?.apply(snapshot);
     await r.dom('showRoutes',[{refresh:true}]);capability=await read(r,'inspect');
     if(capability.departureControls!==1)return fallback('BULK_DEPARTURE_CONTROL_UNAVAILABLE');
   }
   const routeIds=capability.departureRouteIds,landed=snapshot.fleet.filter(a=>a.location==='landedList'&&a.grounded==='0');
   if(!routeIds?.length||routeIds.length!==capability.departureCount)return fallback('BULK_DEPARTURE_SCOPE_NOT_BOUND');
   if(landed.length===routeIds.length)targets=landed;
-  else if(targets.length!==routeIds.length)return fallback('BULK_DEPARTURE_SCOPE_NOT_BOUND',{landed:landed.length,targets:targets.length,native:routeIds.length});
-  if(targets.some(a=>excludedAircraft(snapshot,a)||departureEligibility({...snapshot,markets:r.resources.value},a.registration,r.holds(a.registration),null).reasons.some(s=>s!=='FLIGHT_DURATION_UNKNOWN')))return fallback('BULK_DEPARTURE_POLICY');
+  else if(targets.length<routeIds.length)return fallback('BULK_DEPARTURE_SCOPE_NOT_BOUND',{landed:landed.length,targets:targets.length,native:routeIds.length});
+  targets=targets.filter(a=>!excludedAircraft(snapshot,a)&&!departureEligibility({...snapshot,markets:r.resources.value},a.registration,r.holds(a.registration),null).reasons.some(s=>s!=='FLIGHT_DURATION_UNKNOWN'));if(targets.length<routeIds.length)return fallback('BULK_DEPARTURE_POLICY');
   r.resources.observeBurn((await r.dom('receipt')).receipt);
-  const flights=[];let actions=[];
+  let flights=[];let actions=[];r.dispatchFlights||=new Map();
   try{
     for(const a of targets){
-      const selected=await r.evaluate(renderBlock(r.source.blocks.selectJs,a.registration,null,a.aircraftId),'source.selectJs');
-      if(!selected.ok)return fallback('BULK_SELECTION_FAILED');await r.pause(650);
-      const f=await r.dom('flight');
-      if(f.aircraftId!==a.aircraftId||f.registrations?.length!==1||f.registrations[0]!==a.registration||!departureEligibility({...snapshot,markets:r.resources.value},a.registration,r.holds(a.registration),f.hours).eligible||!r.resources.observeHeader(f.header))return fallback('BULK_FLIGHT_POLICY');
+      if(r.productionPassDeadline)r.deadline=Math.min(r.productionPassDeadline,Date.now()+120000);
+      let f=r.dispatchFlights.get(a.aircraftId);const cached=Boolean(f);
+      if(!f){const selected=await r.evaluate(renderBlock(r.source.blocks.selectJs,a.registration,null,a.aircraftId),'source.selectJs');
+        if(!selected.ok)return fallback('BULK_SELECTION_FAILED');await r.pause(650);f=await r.dom('flight');}
+      if(cached&&!routeIds.includes(f.routeId))continue;
+      if(f.aircraftId!==a.aircraftId||f.registrations?.length!==1||f.registrations[0]!==a.registration||!departureEligibility({...snapshot,markets:r.resources.value},a.registration,r.holds(a.registration),f.hours).eligible||!cached&&!r.resources.observeHeader(f.header))return fallback('BULK_FLIGHT_POLICY');
       // Exact current fuel needs; optional CO2 burn margin is planning evidence, never an observed requirement.
       if(!Number.isSafeInteger(f.fuelRequired)||f.fuelRequired<0)return fallback('BULK_ROUTE_RESOURCE_REQUIREMENTS_UNKNOWN');
       const co2Budget=Number.isSafeInteger(f.co2Required)&&f.co2Required>=0?f.co2Required:r.resources.usage.co2>0?Math.ceil(r.resources.usage.co2*1.25):null;
       if(co2Budget===null)return fallback('BULK_ROUTE_RESOURCE_REQUIREMENTS_UNKNOWN');
-      flights.push({...f,co2Budget});
+      r.dispatchFlights.set(a.aircraftId,{aircraftId:f.aircraftId,registrations:f.registrations,routeId:f.routeId,hours:f.hours,fuelRequired:f.fuelRequired,co2Required:f.co2Required});
+      if(routeIds.includes(f.routeId))flights.push({...f,co2Budget});
+      if(flights.length===routeIds.length)break;
     }
     if(new Set(flights.map(f=>f.routeId)).size!==routeIds.length||!flights.every(f=>routeIds.includes(f.routeId)))return fallback('BULK_ROUTE_SCOPE_CHANGED');
+    targets=targets.filter(a=>flights.some(f=>f.aircraftId===a.aircraftId));
     if(flights.reduce((sum,f)=>sum+f.fuelRequired,0)+75000>r.resources.value.fuel.holding||flights.reduce((sum,f)=>sum+f.co2Budget,0)+75000>r.resources.value.co2.holding)return fallback('BULK_RESOURCE_BUDGET_INSUFFICIENT');
     if(!r.options.live)return fallback('BULK_INSPECTION_ONLY');
     await r.confirm('departure','Bulk departure',null);await r.guard.check();r.verifySource();
-    const before=await r.dom('receipt');await r.dom('showRoutes');actions=await intentGroup(r,snapshot,targets,'departure');
+    const before=await r.dom('receipt');if(!r.resources.observeHeader(before.header))return fallback('BULK_RESOURCE_OBSERVATION_CHANGED');await r.dom('showRoutes');actions=await intentGroup(r,snapshot,targets,'departure');
     const sent=await commit(r,'departureCommit',{ids:targets.map(a=>a.aircraftId),routeIds:flights.map(f=>f.routeId),excludedAircraftIds:[...r.excludedIds]});
     if(!sent.clicked){noSubmission(r,actions);return {...reportGroup(actions,sent.reason,'SKIP',[],false),evidence:sent.evidence};}
     for(const a of actions){a.state='UNKNOWN';r.store.saveAction(a);}

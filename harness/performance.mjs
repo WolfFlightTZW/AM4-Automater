@@ -12,4 +12,4 @@ export function requiresRecoveryBackoff(actions,{scheduleComplete=true,maintenan
   // A bounded, known aircraft maintenance uncertainty still blocks that aircraft and reserves funds.
   return actions.some(a=>!['repair','check'].includes(a.kind)||!['PENDING','UNKNOWN'].includes(a.state)||typeof a.registration!=='string'||!a.registration||typeof a.aircraftId!=='string'||!/^[1-9][0-9]*$/.test(a.aircraftId)||!Number.isSafeInteger(a.quote?.cost)||a.quote.cost<0);
 }
-export const defaultMaxDepartures=20;
+export const defaultMaxDepartures=1000;

@@ -73,7 +73,7 @@ test('consumption comes only from verified receipt hook, no permanent aircraft h
 test('real Runner market hook cannot alter observations, cache schedule or purchase policy even when observer throws',async()=>{
  const root=process.env.AM4_SOURCE_ROOT||fileURLToPath(new URL('../../',import.meta.url)),r=new Runner({maxSeconds:30,productionRoot:root},readSource(root),{});r.resources.batch=true;let reads=0;
  const m=markets();for(const k of ['fuel','co2'])m[k].nextRefreshSeconds=1000;
- r.evaluate=async()=>{reads++;return structuredClone(m);};r.forecast={observeMarkets(){throw Error('synthetic advisory fault');}};
+ r.evaluate=async()=>{reads++;return structuredClone(m);};r.dom=async()=>({fuel:m.fuel.holding,co2Percent:m.co2.holding/m.co2.capacityMax*100});r.forecast={observeMarkets(){throw Error('synthetic advisory fault');}};
  const first=await r.markets(),before=purchaseDecision(first,'fuel');await r.markets();assert.equal(reads,1);assert.equal(r.resources.priceDue('fuel'),false);assert.deepEqual(purchaseDecision(r.resources.value,'fuel'),before);
  const b=base(),copy=structuredClone(b);planResources(b);assert.deepEqual(b,copy);
 });

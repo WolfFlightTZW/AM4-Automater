@@ -1,9 +1,9 @@
 // Session-only observations and receipt-accounted working inventory. Nothing is persisted.
 export class ResourceCache {
   constructor({maxAgeMs=10000,unreliableTimerRetryMs=60000,now=Date.now}={}){this.unreliableTimerRetryMs=unreliableTimerRetryMs;this.maxAgeMs=maxAgeMs;this.now=now;this.batch=false;this.dispatchRemaining=null;this.usage={fuel:0,co2:0};this.decisions={};this.logKeys={};this.invalidate();this.metrics={reads:0,hits:0,invalidations:0,receiptDebits:0,uncertainDebits:0,headerMismatches:0};}
-  invalidate(kind){if(kind&&this.value){delete this.value[kind];this.value.ok=false;}else{this.value=null;this.at=0;}if(this.metrics)this.metrics.invalidations++;}
+  invalidate(kind){this.headerAnchor=null;if(kind&&this.value){delete this.value[kind];this.value.ok=false;}else{this.value=null;this.at=0;}if(this.metrics)this.metrics.invalidations++;}
   priceDue(kind){return kind?this.marketDue(kind):['fuel','co2'].some(k=>this.marketDue(k));}
-  marketDue(kind){return this.purchasePlan?this.purchasePlan(kind).observe:this.legacyMarketDue(kind);}
+  marketDue(kind){const m=this.value?.[kind];if(m&&!m.ok&&this.now()<m.priceValidUntil)return false;if(m?.ok&&this.now()-(m.observedAt??this.now())>=1800000)return true;return this.purchasePlan?this.purchasePlan(kind).observe:this.legacyMarketDue(kind);}
   legacyMarketDue(kind){const m=this.value?.[kind];return !m||(!(m.ok&&m.holding>=m.capacityMax)&&this.now()>=(m.priceValidUntil??0));}
   beginDispatch(count){this.dispatchRemaining=count;}
   endDispatch(){this.dispatchRemaining=null;}
@@ -22,7 +22,7 @@ export class ResourceCache {
     return m.holding<this.resourceBudget(kind,required);
   }
   purchaseKey(kind){const m=this.value?.[kind];return m?JSON.stringify([m.pricePer1000,m.holding,m.capacityMax,m.cash]):null;}
-  purchaseDue(kind){return this.purchasePlan?this.purchasePlan(kind).evaluate:this.legacyPurchaseDue(kind);}
+  purchaseDue(kind){const m=this.value?.[kind];if(m&&!m.ok&&this.now()<m.priceValidUntil)return false;return this.purchasePlan?this.purchasePlan(kind).evaluate:this.legacyPurchaseDue(kind);}
   legacyPurchaseDue(kind){
     if(this.dispatchRemaining!==null)return this.dispatchPurchaseDue(kind);
     if(this.legacyMarketDue(kind))return true;
@@ -36,27 +36,33 @@ export class ResourceCache {
     const changed=d.decision!=='SKIP'||this.logKeys[kind]!==key;this.logKeys[kind]=key;return changed;
   }
   low(){return !this.value||['fuel','co2'].some(k=>!Number.isSafeInteger(this.value[k]?.holding)||this.value[k].holding<250000);}
+  anchorHeader(header){
+    // A fresh market observation is authoritative. The cosmetic header can be stale.
+    if(this.value?.ok&&Number.isSafeInteger(header?.fuel)&&Number.isFinite(header.co2Percent)){this.headerAnchor={fuel:header.fuel,co2Percent:header.co2Percent};if(header.fuel!==this.value.fuel.holding)this.lastReconciliation={source:'CURRENT_MARKET_HOLDING',fuel:this.value.fuel.holding,staleHeaderFuel:header.fuel,gap:header.fuel-this.value.fuel.holding};}
+  }
+  headerMatches(header,holding=this.value,alternatives=[]){
+    if(!holding?.fuel?.ok||!holding.co2?.ok||!Number.isSafeInteger(header?.fuel)||!Number.isFinite(header.co2Percent))return false;
+    const candidates=[{fuel:holding.fuel.holding,co2Percent:holding.co2.holding/holding.co2.capacityMax*100},...alternatives.filter(Boolean)];
+    return candidates.some(h=>h.fuel===header.fuel)&&candidates.some(h=>Number.isFinite(h.co2Percent)&&Math.abs(h.co2Percent-header.co2Percent)<=0.00011);
+  }
   observeHeader(header){
-    if(!this.value)return false;
-    if(!this.value.fuel?.ok||!this.value.co2?.ok){this.invalidate();return false;}
-    const co2=this.value.co2,percent=co2.holding/co2.capacityMax*100;
-    if(!Number.isSafeInteger(header?.fuel)||header.fuel!==this.value.fuel.holding||!Number.isFinite(header.co2Percent)||Math.abs(header.co2Percent-percent)>0.00011){this.lastIssue=header?.fuel!==this.value.fuel.holding?'FUEL_HEADER_CHANGED':'CO2_HEADER_CHANGED';this.metrics.headerMismatches++;this.invalidate();return false;}
-    if(Number.isSafeInteger(header.cash))for(const k of ['fuel','co2'])this.value[k].cash=header.cash;
-    return true;
+    if(!this.value?.ok)return false;
+    if(!this.headerMatches(header,this.value,[this.headerAnchor])){this.lastIssue='AUTHORITATIVE_HEADER_CHANGED';this.metrics.headerMismatches++;this.invalidate();return false;}
+    if(Number.isSafeInteger(header.cash))for(const k of ['fuel','co2'])this.value[k].cash=header.cash;return true;
   }
-  debitReady(before,after){
-    const v=this.value,r=after?.receipt;return Boolean(v&&before&&after&&Number.isSafeInteger(before.epoch)&&before.epoch===after.epoch&&after.versions?.fuel>before.versions?.fuel&&after.versions?.co2>before.versions?.co2&&r?.routes===1&&[r.fuel,r.co2].every(n=>Number.isSafeInteger(n)&&n>=0)&&r.fuel<=v.fuel.holding&&r.co2<=v.co2.holding&&before.header?.fuel===v.fuel.holding&&after.header?.fuel===v.fuel.holding-r.fuel&&Number.isFinite(after.header?.co2Percent)&&Math.abs(after.header.co2Percent-(v.co2.holding-r.co2)/v.co2.capacityMax*100)<=0.00011);
-  }
-  debit(before,after){
+  receiptProof(before,after){
     const v=this.value,r=after?.receipt;
-    const valid=v&&before&&after&&Number.isSafeInteger(before.epoch)&&before.epoch===after.epoch&&after.versions?.fuel>before.versions?.fuel&&after.versions?.co2>before.versions?.co2&&r?.routes===1&&[r.fuel,r.co2].every(n=>Number.isSafeInteger(n)&&n>=0)&&r.fuel<=v.fuel.holding&&r.co2<=v.co2.holding&&before.header?.fuel===v.fuel.holding&&after.header?.fuel===v.fuel.holding-r.fuel;
-    if(!valid){this.lastIssue=!v?'NO_WORKING_INVENTORY':!before||!after||before.epoch!==after.epoch?'RECEIPT_MONITOR_CHANGED':!(after.versions?.fuel>before.versions?.fuel&&after.versions?.co2>before.versions?.co2)?'RECEIPT_NOT_UPDATED':r?.routes!==1?'RECEIPT_NOT_SINGLE_FLIGHT':after.header?.fuel!==v.fuel.holding-r.fuel?'FUEL_RECEIPT_DELTA_MISMATCH':'RECEIPT_INVALID';this.metrics.uncertainDebits++;this.invalidate();return false;}
-    v.fuel.holding-=r.fuel;v.co2.holding-=r.co2;
-    for(const k of ['fuel','co2'])v[k].capacityUsed=v[k].capacityMax-v[k].holding;
-    if(!this.observeHeader(after.header)){this.metrics.uncertainDebits++;return false;}
-    for(const k of ['fuel','co2'])this.usage[k]=Math.max(this.usage[k],r[k]);
-    if(this.dispatchRemaining!==null)this.dispatchRemaining=Math.max(0,this.dispatchRemaining-1);
-    this.lastIssue=null;this.metrics.receiptDebits++;return true;
+    if(!v?.ok||!before||!after||!Number.isSafeInteger(before.epoch)||before.epoch!==after.epoch||!(after.versions?.fuel>before.versions?.fuel&&after.versions?.co2>before.versions?.co2)||r?.routes!==1||![r.fuel,r.co2].every(n=>Number.isSafeInteger(n)&&n>=0)||r.fuel>v.fuel.holding||r.co2>v.co2.holding||!(this.headerAnchor?this.headerMatches(before.header,v,[this.headerAnchor]):before.header?.fuel===v.fuel.holding))return false;
+    const expected={fuel:{...v.fuel,holding:v.fuel.holding-r.fuel},co2:{...v.co2,holding:v.co2.holding-r.co2}};
+    const relative={fuel:before.header.fuel-r.fuel,co2Percent:before.header.co2Percent-r.co2/v.co2.capacityMax*100};
+    return this.headerMatches(after.header,expected,this.headerAnchor?[before.header,relative]:[]);
+  }
+  debitReady(before,after){return this.receiptProof(before,after);}
+  debit(before,after){
+    if(!this.receiptProof(before,after)){this.lastIssue='RECEIPT_OR_HEADER_UNCERTAIN';this.metrics.uncertainDebits++;this.invalidate();return false;}
+    const v=this.value,r=after.receipt;for(const k of ['fuel','co2']){v[k].holding-=r[k];v[k].capacityUsed=v[k].capacityMax-v[k].holding;this.usage[k]=Math.max(this.usage[k],r[k]);}
+    this.anchorHeader(after.header);if(Number.isSafeInteger(after.header.cash))for(const k of ['fuel','co2'])v[k].cash=after.header.cash;
+    if(this.dispatchRemaining!==null)this.dispatchRemaining=Math.max(0,this.dispatchRemaining-1);this.lastIssue=null;this.metrics.receiptDebits++;return true;
   }
   observeBurn(receipt){
     if(!Number.isInteger(receipt?.routes)||receipt.routes<1)return;
@@ -86,5 +92,5 @@ export class ResourceCache {
     this.value.ok=['fuel','co2'].every(k=>this.value[k]?.ok);
     return structuredClone(this.value);
   }
-  setDeadline(kind){const m=this.value[kind],seconds=m.nextRefreshSeconds;m.priceValidUntil=this.now()+(m.ok&&Number.isInteger(seconds)&&seconds>0?seconds*1000:this.unreliableTimerRetryMs);if(m.ok&&m.holding>=m.capacityMax)this.decisions[kind]={key:this.purchaseKey(kind),price:m.pricePer1000,window:Math.round(m.priceValidUntil/60000)};}
+  setDeadline(kind){const m=this.value[kind],seconds=m.nextRefreshSeconds;m.observedAt=this.now();m.priceValidUntil=this.now()+(m.ok&&Number.isInteger(seconds)&&seconds>0?seconds*1000:this.unreliableTimerRetryMs);if(m.ok&&m.holding>=m.capacityMax)this.decisions[kind]={key:this.purchaseKey(kind),price:m.pricePer1000,window:Math.round(m.priceValidUntil/60000)};}
 }
