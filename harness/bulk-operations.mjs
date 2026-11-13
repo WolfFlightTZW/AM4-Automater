@@ -63,7 +63,9 @@ export async function bulkDeparture(r,snapshot,targets){
       if(!f){const selected=await r.evaluate(renderBlock(r.source.blocks.selectJs,a.registration,null,a.aircraftId),'source.selectJs');
         if(!selected.ok)return fallback('BULK_SELECTION_FAILED');await r.pause(650);f=await r.dom('flight');}
       if(cached&&!routeIds.includes(f.routeId))continue;
-      if(f.aircraftId!==a.aircraftId||f.registrations?.length!==1||f.registrations[0]!==a.registration||!departureEligibility({...snapshot,markets:r.resources.value},a.registration,r.holds(a.registration),f.hours).eligible||!cached&&!r.resources.observeHeader(f.header))return fallback('BULK_FLIGHT_POLICY');
+      // An unrelated aircraft with no usable flight must not veto a different explicit native cohort.
+      if(!routeIds.includes(f.routeId)){r.dispatchFlights.set(a.aircraftId,{aircraftId:f.aircraftId,registrations:f.registrations,routeId:f.routeId,hours:f.hours,fuelRequired:f.fuelRequired,co2Required:f.co2Required});continue;}
+      if(f.aircraftId!==a.aircraftId||f.registrations?.length!==1||f.registrations[0]!==a.registration||!departureEligibility({...snapshot,markets:r.resources.value},a.registration,r.holds(a.registration),f.hours).eligible||!cached&&!r.resources.observeHeader(f.header))return fallback('BULK_FLIGHT_POLICY',{aircraftId:a.aircraftId,routeId:f.routeId,hours:f.hours,inventoryIssue:r.resources.lastIssue});
       // Exact current fuel needs; optional CO2 burn margin is planning evidence, never an observed requirement.
       if(!Number.isSafeInteger(f.fuelRequired)||f.fuelRequired<0)return fallback('BULK_ROUTE_RESOURCE_REQUIREMENTS_UNKNOWN');
       const co2Budget=Number.isSafeInteger(f.co2Required)&&f.co2Required>=0?f.co2Required:r.resources.usage.co2>0?Math.ceil(r.resources.usage.co2*1.25):null;
