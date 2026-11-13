@@ -231,7 +231,8 @@ export function createDom(doc = document, repairWearThreshold = 20) {
     const routeId=buttons.length===1?buttons[0].id.slice('flightInfoDepart'.length):null;
     const rows=aircraftId?[...doc.querySelectorAll('.flight-list[data-reg]')].filter(r=>r.id==='flightStatus'+aircraftId):[];
     const regs=rows.length===1?[String(rows[0].dataset.reg||'')]:[];
-    return { aircraftId, routeId, fuelRequired:number(clean(panel.innerText).match(/Fuel usage\s+([\d,]+)\s*Lbs/i)?.[1]), co2Required:number(clean(panel.innerText).match(/CO(?:2|\u2082) (?:usage|quotas?)\s+([\d,]+)/i)?.[1]),header:inventory(), hours: m && Number(m[2]) < 60 && Number(m[3]) < 60 ? Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
+    // AM4 can display a rounded seconds component of 60; arithmetic carries it into minutes.
+    return { aircraftId, routeId, fuelRequired:number(clean(panel.innerText).match(/Fuel usage\s+([\d,]+)\s*Lbs/i)?.[1]), co2Required:number(clean(panel.innerText).match(/CO(?:2|\u2082) (?:usage|quotas?)\s+([\d,]+)/i)?.[1]),header:inventory(), hours: m && Number(m[2]) < 60 && Number(m[3]) <= 60 ? (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) / 3600 : null, registrations:regs, evidence: clean(panel.innerText).slice(0, 1500) };
   }
   return { maintenance, schedule, controls, browserAutomation, navigate, showFleet, showRoutes, openPlanner, inspectPlanner, commit, response, flight, inventory, receipt, departureObservation, number, handler, registrations };
 }
